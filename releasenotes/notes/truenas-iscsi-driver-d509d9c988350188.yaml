@@ -1,0 +1,31 @@
+---
+features:
+  - |
+    Added a new iSCSI volume driver for TrueNAS SCALE storage appliances,
+    ``cinder.volume.drivers.truenas.driver.TrueNASISCSIDriver``. The driver
+    provisions each Cinder volume as a ZFS zvol exported over iSCSI, driving
+    the TrueNAS WebSocket JSON-RPC API; all host-side attach, detach, and
+    multipath handling is performed by ``os-brick``.
+
+    Supported operations: create and delete volume, attach and detach,
+    extend, create and delete snapshot, revert volume to snapshot, create
+    volume from snapshot, clone volume, thin provisioning, multipath, and
+    multiattach.
+
+    The driver lazily imports the ``truenas_api_client`` Python package
+    (LGPLv3), which is **not** part of ``global-requirements`` and must be
+    installed out of band on the ``cinder-volume`` host. If it is missing the
+    driver fails ``check_for_setup_error`` with an actionable message.
+
+    To enable the driver, add a backend stanza to ``cinder.conf`` and list it
+    in ``enabled_backends``::
+
+        [truenas]
+        volume_driver = cinder.volume.drivers.truenas.driver.TrueNASISCSIDriver
+        volume_backend_name = truenas
+        san_ip = truenas.example.com
+        san_login = admin
+        truenas_api_key = <api-key>
+        truenas_pool = tank
+        truenas_dataset_root = cinder
+        target_prefix = iqn.2005-10.org.freenas.ctl
