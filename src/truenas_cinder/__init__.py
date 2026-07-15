@@ -1,4 +1,4 @@
-# Copyright (c) 2026 TrueNAS, Inc.
+# Copyright (c) 2026 TrueNAS
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
