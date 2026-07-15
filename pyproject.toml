@@ -1,0 +1,93 @@
+[project]
+name = "truenas-cinder"
+version = "0.1.0"
+description = "TrueNAS OpenStack Cinder iSCSI volume driver"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "TrueNAS" }]
+# Runtime note: the driver imports ``truenas_api_client`` lazily (RBD model).
+# It is NOT a hard install dependency of the in-tree Cinder driver; operators
+# install it out-of-band. It is declared as a dev dependency below so the dev
+# repo's imports type-check and tests can fake it.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/truenas/truenas_cinder"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/truenas_cinder"]
+
+# ---------------------------------------------------------------------------
+# ruff: linter + formatter, tuned to match OpenStack hacking/pep8 so the
+# synced module passes ``tox -e pep8`` in the cinder fork.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 79
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import ordering)
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+]
+# H-checks (hacking) are enforced by tox -e pep8 in the fork; ruff only
+# approximates them. Keep this list conservative to avoid churn the fork
+# would reject.
+ignore = [
+    "UP035",  # deprecated typing imports — cinder still targets older style
+]
+
+[tool.ruff.lint.isort]
+# OpenStack import ordering: stdlib, third-party, first-party, each grouped.
+known-first-party = ["truenas_cinder", "cinder"]
+force-sort-within-sections = false
+
+[tool.ruff.format]
+quote-style = "single"
+
+# ---------------------------------------------------------------------------
+# basedpyright: strict, must be clean (zero errors).
+# ---------------------------------------------------------------------------
+[tool.basedpyright]
+typeCheckingMode = "strict"
+include = ["src", "tests"]
+# Hand-written stubs for the untyped cinder symbols the driver imports
+# (cinder ships no py.typed). Not synced in-tree.
+stubPath = "stubs"
+pythonVersion = "3.10"
+# truenas_api_client is untyped and lazily imported; the typed boundary lives
+# in client.py. cinder/oslo are dev-only, partially typed third-party libs.
+reportMissingModuleSource = false
+# White-box unit tests legitimately assign driver internals (driver._pool etc.)
+# to set up fixtures; this is the one strict rule inherently at odds with that.
+# All other strict diagnostics remain enabled across src and tests.
+reportPrivateUsage = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv.sources]
+truenas-api-client = { git = "https://github.com/truenas/api_client.git" }
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.9",
+    "cinder>=28.0.0",
+    "os-brick>=7.0.0",
+    "oslo-config>=10.4.0",
+    "pytest>=9.1.1",
+    "ruff>=0.15.21",
+    "truenas-api-client",
+]
