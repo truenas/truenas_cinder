@@ -1,0 +1,80 @@
+# ---- Local-only working docs (not published to the repo) ----
+PLAN.md
+CLAUDE.md
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Packaging / build
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ---- uv / virtualenvs ----
+# NOTE: uv.lock IS committed for reproducibility — do not ignore it.
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ---- Tooling caches ----
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.pytype/
+.pytest_cache/
+.cache/
+
+# ---- Test / coverage ----
+.tox/
+.nox/
+.stestr/
+.testrepository/
+.coverage
+.coverage.*
+cover/
+htmlcov/
+coverage.xml
+*.cover
+nosetests.xml
+.hypothesis/
+
+# ---- OpenStack / pbr (relevant once synced into a cinder fork) ----
+AUTHORS
+ChangeLog
+RELEASENOTES.rst
+releasenotes/build/
+*.sqlite
+# Generated sample config
+etc/*/*.conf.sample
+
+# ---- Docs ----
+doc/build/
+.doctrees/
+
+# ---- IDE / editor / OS ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
