@@ -1,4 +1,4 @@
-# truenas_cinder
+# Truenas Cinder Driver
 
 An OpenStack Cinder iSCSI volume driver for TrueNAS SCALE.
 
