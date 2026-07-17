@@ -47,9 +47,11 @@ Prerequisites
 
 - The ``truenas_api_client`` Python package installed on each
   ``cinder-volume`` host. It is **not** part of ``global-requirements`` and
-  must be installed out of band::
+  must be installed out of band. Until the package is published to an index,
+  install it from a pinned git tag (replace the placeholder URL and tag with
+  the values your storage team provides)::
 
-    pip install truenas-api-client
+    pip install "truenas-api-client @ git+https://git.example.com/truenas/api_client.git@<PINNED_TAG>"
 
   If it is missing, the driver fails ``check_for_setup_error`` with an
   actionable message.

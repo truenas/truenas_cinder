@@ -14,8 +14,12 @@ features:
 
     The driver lazily imports the ``truenas_api_client`` Python package
     (LGPLv3), which is **not** part of ``global-requirements`` and must be
-    installed out of band on the ``cinder-volume`` host. If it is missing the
-    driver fails ``check_for_setup_error`` with an actionable message.
+    installed out of band on the ``cinder-volume`` host -- until it is
+    published to a package index, from a pinned git tag, for example
+    ``pip install "truenas-api-client @
+    git+https://git.example.com/truenas/api_client.git@<PINNED_TAG>"``. If it
+    is missing the driver fails ``check_for_setup_error`` with an actionable
+    message.
 
     To enable the driver, add a backend stanza to ``cinder.conf`` and list it
     in ``enabled_backends``::
