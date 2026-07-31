@@ -62,7 +62,7 @@ Prerequisites
 - An **iSCSI portal** configured on TrueNAS. Note its ID; the portal's listen
   addresses are read at connection time to build the multipath portal list.
 
-- The TrueNAS iSCSI (SCST) service enabled, with a base IQN name configured.
+- The TrueNAS iSCSI service enabled, with a base IQN name configured.
 
 Configuration
 ~~~~~~~~~~~~~
