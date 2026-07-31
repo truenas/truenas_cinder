@@ -1,6 +1,6 @@
 # Truenas Cinder Driver
 
-An OpenStack Cinder iSCSI volume driver for TrueNAS SCALE.
+An OpenStack Cinder driver for TrueNAS SCALE.
 
 `TrueNASISCSIDriver` is a control-plane-only Cinder driver: it provisions
 zvols, iSCSI extents, and targets on a TrueNAS SCALE appliance over the
