@@ -193,6 +193,46 @@ class ErrorTranslationTest(unittest.TestCase):
         client.delete_auth(1)
         client.delete_initiator(1)
 
+    def _validation_errors(self, *codes: int) -> BaseException:
+        """A ValidationErrors carrying the given per-entry error codes.
+
+        TrueNAS reports "does not exist" this way, and the class sets no
+        top-level errno -- the code lives on each collected entry.
+        """
+        from truenas_api_client.exc import ValidationErrors
+        from truenas_api_client.jsonrpc import ErrorExtra
+
+        return ValidationErrors(
+            [
+                ErrorExtra('ALL', f'object {i} does not exist', code)
+                for i, code in enumerate(codes)
+            ]
+        )
+
+    def test_validation_error_enoent_maps_to_not_found(self) -> None:
+        exc = self._validation_errors(errno.ENOENT)
+        self.assertIsNone(getattr(exc, 'errno', None))
+        result = self._raise(exc)
+        self.assertIsInstance(result, TrueNASNotFound)
+
+    def test_validation_error_enoent_makes_deletes_idempotent(self) -> None:
+        client, raw = _connected()
+        raw.raises = self._validation_errors(errno.ENOENT)
+        # This is the shape a real appliance returns for an already-removed
+        # object, so every delete path must still treat it as success.
+        client.delete_targetextent(1701)
+        client.delete_target(1839)
+        client.delete_extent(1634)
+        client.delete_dataset('tank/cinder/volume-gone')
+        self.assertIsNone(client.get_dataset('tank/cinder/volume-gone'))
+
+    def test_mixed_validation_errors_are_not_not_found(self) -> None:
+        # A partial failure must not be mistaken for "already gone".
+        exc = self._validation_errors(errno.ENOENT, errno.EINVAL)
+        result = self._raise(exc)
+        self.assertIsInstance(result, TrueNASApiError)
+        self.assertNotIsInstance(result, TrueNASNotFound)
+
     def test_get_dataset_missing_returns_none(self) -> None:
         assert tn_client._ClientException is not None
         client, raw = _connected()

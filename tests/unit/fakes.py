@@ -21,6 +21,7 @@ lifecycle tests would pass vacuously while real hardware fails. Specifically
 the fake:
 
 * rejects ``delete_snapshot(defer=False)`` on a snapshot that has clones,
+* keeps a ``defer=True`` snapshot listed until its last clone is released,
 * rejects ``delete_dataset`` of a dataset that is still a clone origin,
 * implements ``promote_dataset`` by re-parenting the origin snapshot.
 
@@ -332,10 +333,15 @@ class FakeTrueNASClient:
     def get_snapshot(self, snapshot_id: str) -> JsonDict | None:
         self._record('get_snapshot', snapshot_id=snapshot_id)
         snap = self.snapshots.get(snapshot_id)
-        # Deferred snapshots disappear from listings.
-        if snap is None or snap['deferred']:
+        if snap is None:
             return None
-        return {'id': snapshot_id, 'dataset': snap['dataset']}
+        # A deferred-destroy snapshot stays visible in pool.snapshot.query
+        # (ZFS defer_destroy=on) and is reaped when its last clone goes.
+        return {
+            'id': snapshot_id,
+            'dataset': snap['dataset'],
+            'properties': {'defer_destroy': {'parsed': snap['deferred']}},
+        }
 
     def rollback_snapshot(
         self, snapshot_id: str, *, force: bool = True

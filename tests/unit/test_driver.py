@@ -374,16 +374,21 @@ class CloneLifecycleTest(_DriverTestCase):
         child = fakes.FakeVolume('V', size=1)
         self.driver.create_volume_from_snapshot(child, snap)
 
-        # Delete S: it has a clone, so it is deferred (hidden) but survives.
+        # Delete S: it has a clone, so it is destroyed with defer=True. The
+        # snapshot stays on the backend (defer_destroy) holding the clone's
+        # origin, and is reaped when the clone goes away.
         self.driver.delete_snapshot(snap)
         snap_id = common.snapshot_id(
             self._dataset('vol'), common.snapshot_name('S')
         )
-        self.assertIsNone(self.client.get_snapshot(snap_id))
+        row = self.client.get_snapshot(snap_id)
+        assert row is not None
+        self.assertTrue(row['properties']['defer_destroy']['parsed'])
         self.assertIn(self._dataset('V'), self.client.datasets)
 
         # Now tear everything down.
         self.driver.delete_volume(child)
+        self.assertIsNone(self.client.get_snapshot(snap_id))
         self.driver.delete_volume(vol)
         self.assertEqual(self.client.datasets, {})
         self.assertEqual(self.client.snapshots, {})

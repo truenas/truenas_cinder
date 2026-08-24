@@ -212,11 +212,37 @@ class TrueNASClient:
             raise self._translate(method, exc) from exc
 
     @staticmethod
+    def _errno_of(exc: Exception) -> int | None:
+        """Best-effort error code for a raw client exception.
+
+        TrueNAS reports "object does not exist" as a validation error, and
+        ``ValidationErrors`` carries no top-level ``errno`` -- the real code
+        sits on each collected entry. Fall back to that collection, but only
+        trust it when every entry agrees, so a partial validation failure is
+        never mistaken for "already gone".
+        """
+        errno_val: object = getattr(exc, 'errno', None)
+        if isinstance(errno_val, int):
+            return errno_val
+        raw_errors: object = getattr(exc, 'errors', None)
+        if isinstance(raw_errors, (list, tuple)):
+            entries = cast('list[object] | tuple[object, ...]', raw_errors)
+            codes: set[int] = set()
+            for entry in entries:
+                code: object = getattr(entry, 'errcode', None)
+                if not isinstance(code, int):
+                    return None
+                codes.add(code)
+            if len(codes) == 1:
+                return codes.pop()
+        return None
+
+    @staticmethod
     def _translate(method: str, exc: Exception) -> TrueNASClientError:
         """Map a raw client exception to the driver's typed hierarchy."""
         if _ClientException is not None and isinstance(exc, _ClientException):
-            errno_val: int | None = exc.errno
-            message = f'{method} failed: {exc.error}'
+            errno_val = TrueNASClient._errno_of(exc)
+            message = f'{method} failed: {exc}'
             if errno_val == _errno.ENOENT:
                 return TrueNASNotFound(message, errno=errno_val)
             return TrueNASApiError(message, errno=errno_val)

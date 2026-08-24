@@ -253,14 +253,22 @@ def lifecycle(
                 type(exc).__name__,
             )
 
-        # 2. defer:true hides it and it survives as the clone's origin.
+        # 2. defer:true is accepted and the snapshot survives as the clone's
+        #    origin (ZFS marks defer_destroy and reaps it with the last clone,
+        #    so it stays visible in the meantime).
         client.delete_snapshot(snap_id, defer=True)
-        if client.get_snapshot(snap_id) is None:
-            rep.ok('snapshot delete defer=true', 'hidden from listings')
+        if client.get_snapshot(snap_id) is not None:
+            rep.ok(
+                'snapshot delete defer=true accepted',
+                'still listed, pending last-clone release',
+            )
         else:
-            rep.fail('snapshot delete defer=true', 'still listed')
+            rep.info('snapshot delete defer=true', 'removed immediately')
 
         # 3. destroying the source while a clone depends on it must fail.
+        #    Note: TrueNAS tears down the zvol's iSCSI attachments (extent,
+        #    target, targetextent) as part of this call even when the ZFS
+        #    destroy then fails, so those ids may already be gone below.
         try:
             client.delete_dataset(src, recursive=True, force=True)
             rep.fail(
@@ -319,15 +327,30 @@ def lifecycle(
                 rep.info(f'removed {kind}', str(obj_id))
             except Exception as exc:
                 rep.fail(f'cleanup {kind} {obj_id}', str(exc)[:120])
-        for path in (clone, src):
-            try:
-                client.delete_dataset(path, recursive=True, force=True)
+        # A promote inverts the origin relationship, so whichever dataset now
+        # holds the shared snapshot must go last. Retry both orders rather
+        # than assume which way round the pair ended up.
+        pending = [src, clone]
+        for _ in range(len(pending)):
+            for path in list(pending):
+                try:
+                    client.delete_dataset(path, recursive=True, force=True)
+                except Exception:
+                    continue
                 if client.get_dataset(path) is None:
+                    pending.remove(path)
                     rep.info('removed dataset', path)
-                else:
-                    rep.fail('dataset still present', path)
-            except Exception as exc:
-                rep.fail(f'cleanup dataset {path}', str(exc)[:120])
+        for path in pending:
+            rep.fail('dataset still present', path)
+        if not pending:
+            # Remove the dataset root we created, but non-recursively so a
+            # concurrent run's volumes are never destroyed.
+            root_path = f'{args.pool}/{root}'
+            try:
+                client.delete_dataset(root_path, recursive=False, force=False)
+                rep.info('removed dataset root', root_path)
+            except Exception:
+                rep.info('left dataset root in place', root_path)
 
 
 def main(argv: list[str] | None = None) -> int:
