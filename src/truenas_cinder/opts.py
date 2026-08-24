@@ -40,8 +40,10 @@ truenas_opts: list[cfg.Opt] = [
     ),
     cfg.StrOpt(
         'san_login',
-        default='root',
-        help='TrueNAS username that owns the configured API key.',
+        default='truenas_admin',
+        help='TrueNAS username that owns the configured API key. This is '
+        'required for API-key authentication; it is not necessarily "root" '
+        '(recent TrueNAS SCALE releases use "truenas_admin").',
     ),
     cfg.StrOpt(
         'truenas_api_key',
@@ -56,6 +58,16 @@ truenas_opts: list[cfg.Opt] = [
         default=True,
         help='Verify the TrueNAS server TLS certificate. Set False only for '
         'self-signed certificates in trusted networks.',
+    ),
+    cfg.StrOpt(
+        'truenas_auth_mechanism',
+        default='PLAIN',
+        choices=('PLAIN', 'SCRAM'),
+        help='API-key authentication mechanism. PLAIN transmits the API key '
+        'over the TLS-protected connection and is what TrueNAS SCALE 25.10 '
+        'supports. SCRAM never transmits the key but requires a server that '
+        'implements it (TrueNAS 26 and later). The mechanism is never '
+        'negotiated automatically, so set it to match the appliance.',
     ),
     # --- Storage layout --------------------------------------------------
     cfg.StrOpt(

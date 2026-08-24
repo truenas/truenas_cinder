@@ -14,18 +14,21 @@
 #    under the License.
 """Typed adapter over ``truenas_api_client``.
 
-This is the single place the untyped/LGPL ``truenas_api_client`` is imported.
-The import is lazy (RBD model): if the package is missing the driver still
-loads and reports the failure from ``check_for_setup_error``. Every TrueNAS
-JSON-RPC call the driver makes goes through a typed method here so the rest of
-the codebase never touches raw dicts of ``Any``.
+This is the single place ``truenas_api_client`` is imported. The import is
+lazy: the package is not in global-requirements, so if it is missing the
+driver still loads and reports the failure from ``check_for_setup_error``.
+Every TrueNAS JSON-RPC call the driver makes goes through a typed method here
+so the rest of the codebase never touches raw dicts of ``Any``.
 
-All TrueNAS calls are synchronous JSON-RPC 2.0 requests -- matching the
-production TrueNAS CSI driver, which uses no ``job=true`` polling for any of
-the dataset/snapshot/iscsi methods used here.
+All TrueNAS calls here are synchronous JSON-RPC 2.0 requests; none of the
+dataset, snapshot, or iSCSI methods used by the driver are jobs.
 """
 
 import errno as _errno
+import json
+import ssl
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 
@@ -37,13 +40,30 @@ from truenas_cinder.exception import (
     TrueNASNotFound,
 )
 
-# --- Lazy import of the LGPL client (RBD pattern) -------------------------
+# --- Lazy import of the external client (not in global-requirements) ------
 try:
     from truenas_api_client import Client as _client_factory
+    from truenas_api_client.auth_api_key import APIKeyAuthMech as _AuthMech
     from truenas_api_client.exc import ClientException as _ClientException
 except ImportError:  # pragma: no cover - exercised via check_for_setup_error
     _client_factory = None
+    _AuthMech = None
     _ClientException = None
+
+#: API-key authentication mechanisms.
+#:
+#: ``PLAIN`` sends the API key over the (TLS-protected) connection and is what
+#: TrueNAS SCALE 25.10 supports. ``SCRAM`` never transmits the key but requires
+#: a server that implements it (TrueNAS 26+). The upstream client deliberately
+#: never auto-downgrades SCRAM to PLAIN -- picking the mechanism from the
+#: server's unauthenticated advertisement would let a man-in-the-middle strip
+#: SCRAM and harvest the key -- so the operator selects it explicitly.
+AUTH_PLAIN: str = 'PLAIN'
+AUTH_SCRAM: str = 'SCRAM'
+AUTH_MECHANISMS: tuple[str, ...] = (AUTH_PLAIN, AUTH_SCRAM)
+
+#: API version this driver is developed and tested against.
+REQUIRED_API_VERSION: str = 'v25.10.0'
 
 #: True when ``truenas_api_client`` is importable in this environment.
 DEPENDENCY_AVAILABLE: bool = _client_factory is not None
@@ -66,6 +86,7 @@ class _RawClient(Protocol):
         self,
         username: str,
         api_key: str,
+        auth_mechanism: object = ...,
         *,
         channel_binding: bool = ...,
     ) -> None: ...
@@ -94,18 +115,26 @@ class TrueNASClient:
         *,
         verify_ssl: bool = True,
         timeout: float = 60.0,
+        auth_mechanism: str = AUTH_PLAIN,
         channel_binding: bool | None = None,
     ) -> None:
         """Open the WebSocket connection and authenticate.
 
         ``url`` is the full endpoint, e.g. ``wss://host/api/current``.
-        ``channel_binding`` defaults to ``verify_ssl`` (binding requires a
-        verified TLS chain); it can be disabled for self-signed setups.
+        ``auth_mechanism`` is ``PLAIN`` or ``SCRAM`` (see AUTH_MECHANISMS).
+        ``channel_binding`` applies to SCRAM only and defaults to
+        ``verify_ssl`` (binding requires a verified TLS chain).
         """
         if _client_factory is None:
             raise TrueNASConnectionError(
                 'truenas_api_client is not installed; install it to use the '
                 'TrueNAS Cinder driver.'
+            )
+        mechanism = auth_mechanism.upper()
+        if mechanism not in AUTH_MECHANISMS:
+            raise TrueNASConnectionError(
+                f'Invalid authentication mechanism {auth_mechanism!r}; '
+                f'expected one of {", ".join(AUTH_MECHANISMS)}.'
             )
         if channel_binding is None:
             channel_binding = verify_ssl
@@ -117,13 +146,47 @@ class TrueNASClient:
                 ),
             )
             raw.login_with_api_key(
-                username, api_key, channel_binding=channel_binding
+                username,
+                api_key,
+                _AuthMech(mechanism) if _AuthMech is not None else mechanism,
+                channel_binding=channel_binding,
             )
         except Exception as exc:
             raise TrueNASConnectionError(
-                f'Failed to connect/authenticate to TrueNAS at {url}: {exc}'
+                f'Failed to connect/authenticate to TrueNAS at {url} as '
+                f'{username!r} using {mechanism}: {exc}'
             ) from exc
         self._client = raw
+
+    @staticmethod
+    def api_versions(
+        url: str, *, verify_ssl: bool = True, timeout: float = 10.0
+    ) -> list[str]:
+        """API versions the server advertises, via ``GET /api/versions``.
+
+        Returns an empty list if the endpoint cannot be reached or parsed --
+        the check is advisory, so an unreachable preflight must not stop a
+        backend from starting.
+        """
+        scheme = 'https' if url.startswith('wss') else 'http'
+        host = url.split('://', 1)[-1].split('/', 1)[0]
+        context: ssl.SSLContext | None = None
+        if scheme == 'https' and not verify_ssl:
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        try:
+            with urllib.request.urlopen(  # noqa: S310 - operator-configured
+                f'{scheme}://{host}/api/versions',
+                timeout=timeout,
+                context=context,
+            ) as response:
+                payload = json.loads(response.read())
+        except (urllib.error.URLError, ValueError, OSError):
+            return []
+        if not isinstance(payload, list):
+            return []
+        return [v for v in cast('list[Any]', payload) if isinstance(v, str)]
 
     def close(self) -> None:
         """Close the connection if open (idempotent)."""

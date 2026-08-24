@@ -98,6 +98,7 @@ class TrueNASISCSIDriver(driver.ISCSIDriver):
         self._verify_ssl: bool = True
         self._iqn_base: str = ''
         self._use_chap: bool = False
+        self._auth_mechanism: str = tn_client.AUTH_PLAIN
         self._backend_name: str = 'TrueNAS'
         self._host_address: str = ''
         self._api_url: str = ''
@@ -128,6 +129,9 @@ class TrueNASISCSIDriver(driver.ISCSIDriver):
         self._verify_ssl = bool(conf.safe_get('truenas_verify_ssl'))
         self._iqn_base = str(conf.safe_get('target_prefix') or '')
         self._use_chap = bool(conf.safe_get('use_chap_auth'))
+        self._auth_mechanism = str(
+            conf.safe_get('truenas_auth_mechanism') or tn_client.AUTH_PLAIN
+        )
         self._backend_name = str(
             conf.safe_get('volume_backend_name') or 'TrueNAS'
         )
@@ -140,10 +144,29 @@ class TrueNASISCSIDriver(driver.ISCSIDriver):
             # check_for_setup_error() raises with an operator-friendly message.
             return
 
-        username = str(conf.safe_get('san_login') or 'root')
+        # Advisory preflight: warn on a server that does not advertise the
+        # API version this driver targets. Never fatal -- the endpoint may be
+        # unreachable while the WebSocket API itself is fine.
+        advertised = self._client.api_versions(
+            self._api_url, verify_ssl=self._verify_ssl
+        )
+        if advertised and tn_client.REQUIRED_API_VERSION not in advertised:
+            LOG.warning(
+                'TrueNAS at %s does not advertise API version %s '
+                '(advertised: %s). The driver may misbehave.',
+                self._api_url,
+                tn_client.REQUIRED_API_VERSION,
+                ', '.join(advertised),
+            )
+
+        username = str(conf.safe_get('san_login') or 'truenas_admin')
         api_key = str(conf.safe_get('truenas_api_key') or '')
         self._client.connect(
-            self._api_url, username, api_key, verify_ssl=self._verify_ssl
+            self._api_url,
+            username,
+            api_key,
+            verify_ssl=self._verify_ssl,
+            auth_mechanism=self._auth_mechanism,
         )
         self._portal_ips = self._resolve_portal_ips()
 
@@ -305,6 +328,23 @@ class TrueNASISCSIDriver(driver.ISCSIDriver):
         snap_id = common.snapshot_id(
             dataset, common.snapshot_name(snapshot.id)
         )
+        # ZFS refuses to roll back past a newer snapshot. Cinder guarantees
+        # the target is the newest *Cinder* snapshot, but cloning this volume
+        # leaves a hidden origin snapshot that Cinder does not know about, and
+        # that one cannot be destroyed while its clone exists. Detect it and
+        # fail with an explanation rather than surfacing a raw ZFS error.
+        blockers = [
+            clone
+            for clone in self._client.dependent_clones(dataset)
+            if clone != dataset
+        ]
+        if blockers:
+            raise exception.VolumeBackendAPIException(
+                data=f'Cannot revert {dataset} to {snap_id}: the volume has '
+                f'dependent clones ({", ".join(sorted(blockers))}) whose '
+                'origin snapshots are newer than the target snapshot. Delete '
+                'the volumes cloned from this volume first.'
+            )
         self._client.rollback_snapshot(snap_id, force=True)
 
     def create_volume_from_snapshot(

@@ -189,6 +189,33 @@ class SnapshotTest(_DriverTestCase):
         self.driver.revert_to_snapshot(None, vol, snap)
         self.assertIn('rollback_snapshot', self.client.call_names())
 
+    def test_revert_to_snapshot_blocked_by_dependent_clone(self) -> None:
+        # Cloning leaves a hidden origin snapshot newer than snap1, which
+        # ZFS will not roll back past. Fail with an explanation instead of
+        # surfacing a raw ZFS error.
+        vol = self._prep_volume()
+        snap = fakes.FakeSnapshot('snap1', vol)
+        self.driver.create_snapshot(snap)
+        clone = fakes.FakeVolume('clone1', size=1)
+        self.driver.create_cloned_volume(clone, vol)
+
+        with self.assertRaises(exception.VolumeBackendAPIException) as ctx:
+            self.driver.revert_to_snapshot(None, vol, snap)
+        self.assertIn('dependent clones', str(ctx.exception))
+        # No rollback was attempted.
+        self.assertNotIn('rollback_snapshot', self.client.call_names())
+
+    def test_revert_allowed_after_clone_is_deleted(self) -> None:
+        vol = self._prep_volume()
+        snap = fakes.FakeSnapshot('snap1', vol)
+        self.driver.create_snapshot(snap)
+        clone = fakes.FakeVolume('clone1', size=1)
+        self.driver.create_cloned_volume(clone, vol)
+        self.driver.delete_volume(clone)
+
+        self.driver.revert_to_snapshot(None, vol, snap)
+        self.assertIn('rollback_snapshot', self.client.call_names())
+
 
 class CloneLifecycleTest(_DriverTestCase):
     """The correction #1 scenarios: clone + defer + promote, no leaks."""
