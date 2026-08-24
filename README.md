@@ -1,4 +1,4 @@
-# Truenas Cinder Driver
+# TrueNAS Cinder Driver
 
 An OpenStack Cinder driver for TrueNAS SCALE.
 
@@ -8,7 +8,7 @@ TrueNAS WebSocket JSON-RPC API and returns iSCSI connection information to
 Cinder. All host-side attach/detach/multipath is handled by `os-brick`; the
 driver never mounts anything on the host.
 
-Feature set: Cinder's mandatory iSCSI feature set **plus multipath and
+Feature set: Cinder's mandatory feature set **plus multipath and
 multiattach**.
 
 ## Quick start

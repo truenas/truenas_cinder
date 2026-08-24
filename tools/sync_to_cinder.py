@@ -94,7 +94,7 @@ _INIT_HEADER = """\
 
 _CHECKLIST = """
 Next steps in the cinder fork (this tool does not do these):
-  1. Add a reno note:  releasenotes/notes/truenas-iscsi-driver-*.yaml
+  1. Add a reno note:  releasenotes/notes/truenas-driver-*.yaml
   2. Declare the backend in doc/source/reference/support-matrix.ini and add
      doc/source/configuration/block-storage/drivers/truenas-driver.rst
   3. Regenerate options:            tox -e genopts

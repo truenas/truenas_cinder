@@ -1,7 +1,7 @@
 [project]
 name = "truenas-cinder"
 version = "0.1.0"
-description = "TrueNAS OpenStack Cinder iSCSI volume driver"
+description = "TrueNAS OpenStack Cinder volume driver"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"

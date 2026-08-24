@@ -12,7 +12,7 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-"""oslo.config option definitions for the TrueNAS iSCSI driver.
+"""oslo.config option definitions for the TrueNAS Cinder driver.
 
 The driver owns its own option group rather than inheriting the SAN option
 group (whose SSH/local-exec options are dead weight for a WebSocket-API

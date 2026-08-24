@@ -14,9 +14,9 @@
       implied. See the License for the specific language governing
       permissions and limitations under the License.
 
-==========================
-TrueNAS SCALE iSCSI driver
-==========================
+==============
+TrueNAS driver
+==============
 
 The TrueNAS volume driver provisions each Cinder volume as a ZFS zvol on a
 TrueNAS SCALE appliance and exports it over iSCSI. The driver is control-plane

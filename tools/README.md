@@ -86,7 +86,7 @@ names (e.g. `truenas_pool`, `truenas_api_url`).
 The tool copies code only. The rest of the in-tree submission is manual — it
 prints this checklist after a successful run:
 
-1. Add a reno note: `releasenotes/notes/truenas-iscsi-driver-*.yaml`
+1. Add a reno note: `releasenotes/notes/truenas-driver-*.yaml`
 2. Declare the backend in `doc/source/reference/support-matrix.ini` and add
    `doc/source/configuration/block-storage/drivers/truenas-driver.rst`
 3. Regenerate options: `tox -e genopts`

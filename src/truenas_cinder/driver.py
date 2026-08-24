@@ -12,7 +12,7 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-"""TrueNAS SCALE iSCSI volume driver for OpenStack Cinder.
+"""TrueNAS volume driver for OpenStack Cinder.
 
 Control-plane only: provisions zvols/extents/targets on TrueNAS over the
 WebSocket JSON-RPC API and returns iSCSI connection info. All host-side
@@ -72,10 +72,10 @@ class _SnapshotObj(Protocol):
 
 @interface.volumedriver
 class TrueNASISCSIDriver(driver.ISCSIDriver):
-    """iSCSI driver for TrueNAS SCALE.
+    """TrueNAS Cinder driver.
 
     Version history:
-        1.0.0 - Initial iSCSI driver (create/delete/attach/extend/snapshot/
+        1.0.0 - Initial release (create/delete/attach/extend/snapshot/
                 clone/from-snapshot/from-volume, multipath, multiattach).
     """
 
@@ -98,7 +98,7 @@ class TrueNASISCSIDriver(driver.ISCSIDriver):
         self._verify_ssl: bool = True
         self._iqn_base: str = ''
         self._use_chap: bool = False
-        self._backend_name: str = 'TrueNAS_iSCSI'
+        self._backend_name: str = 'TrueNAS'
         self._host_address: str = ''
         self._api_url: str = ''
         self._portal_ips: list[str] = []
@@ -129,7 +129,7 @@ class TrueNASISCSIDriver(driver.ISCSIDriver):
         self._iqn_base = str(conf.safe_get('target_prefix') or '')
         self._use_chap = bool(conf.safe_get('use_chap_auth'))
         self._backend_name = str(
-            conf.safe_get('volume_backend_name') or 'TrueNAS_iSCSI'
+            conf.safe_get('volume_backend_name') or 'TrueNAS'
         )
         self._host_address = str(conf.safe_get('san_ip') or '')
         self._api_url = str(

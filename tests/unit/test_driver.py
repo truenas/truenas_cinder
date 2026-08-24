@@ -12,7 +12,7 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-"""Unit tests for the TrueNAS iSCSI driver.
+"""Unit tests for the TrueNAS Cinder driver.
 
 The fake client models ZFS clone-dependency semantics, so the clone/snapshot
 lifecycle assertions here exercise the same failure modes real hardware
@@ -66,7 +66,7 @@ class _DriverTestCase(unittest.TestCase):
         driver._sparse = True
         driver._volblocksize = '16K'
         driver._compression = 'LZ4'
-        driver._backend_name = 'TrueNAS_iSCSI'
+        driver._backend_name = 'TrueNAS'
         return driver
 
     def _dataset(self, name_id: str) -> str:
