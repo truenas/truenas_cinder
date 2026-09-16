@@ -2,7 +2,7 @@
 features:
   - |
     Added a new volume driver for TrueNAS SCALE storage systems,
-    ``cinder.volume.drivers.truenas.driver.TrueNASISCSIDriver``. The driver
+    ``cinder.volume.drivers.truenas.driver.TrueNASDriver``. The driver
     provisions each Cinder volume as a ZFS zvol exported over iSCSI, driving
     the TrueNAS WebSocket JSON-RPC API; all host-side attach, detach, and
     multipath handling is performed by ``os-brick``.
@@ -25,7 +25,7 @@ features:
     in ``enabled_backends``::
 
         [truenas]
-        volume_driver = cinder.volume.drivers.truenas.driver.TrueNASISCSIDriver
+        volume_driver = cinder.volume.drivers.truenas.driver.TrueNASDriver
         volume_backend_name = truenas
         san_ip = truenas.example.com
         san_login = admin

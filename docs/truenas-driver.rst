@@ -93,7 +93,7 @@ Add a backend stanza to ``cinder.conf`` and reference it from
    enabled_backends = truenas
 
    [truenas]
-   volume_driver = cinder.volume.drivers.truenas.driver.TrueNASISCSIDriver
+   volume_driver = cinder.volume.drivers.truenas.driver.TrueNASDriver
    volume_backend_name = truenas
    # Connection
    truenas_ip = 192.0.2.10

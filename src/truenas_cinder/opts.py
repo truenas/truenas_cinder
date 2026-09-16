@@ -18,7 +18,7 @@ The driver owns its own option group rather than inheriting the SAN option
 group (whose SSH/local-exec options are dead weight for a WebSocket-API
 backend). ``target_prefix`` (the IQN base) and ``use_chap_auth`` are *not*
 redefined here -- they are supplied by Cinder's base volume options and are
-folded in via ``TrueNASISCSIDriver.get_driver_options``.
+folded in via ``TrueNASDriver.get_driver_options``.
 """
 
 from oslo_config import cfg

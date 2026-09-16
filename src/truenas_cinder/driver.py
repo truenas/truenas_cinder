@@ -71,7 +71,7 @@ class _SnapshotObj(Protocol):
 
 
 @interface.volumedriver
-class TrueNASISCSIDriver(driver.ISCSIDriver):
+class TrueNASDriver(driver.ISCSIDriver):
     """TrueNAS Cinder driver.
 
     Version history:

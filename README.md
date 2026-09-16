@@ -2,7 +2,7 @@
 
 An OpenStack Cinder driver for TrueNAS SCALE.
 
-`TrueNASISCSIDriver` is a control-plane-only Cinder driver: it provisions
+`TrueNASDriver` is a control-plane-only Cinder driver: it provisions
 zvols, iSCSI extents, and targets on TrueNAS SCALE over the
 TrueNAS WebSocket JSON-RPC API and returns iSCSI connection information to
 Cinder. All host-side attach/detach/multipath is handled by `os-brick`; the
@@ -92,7 +92,7 @@ Add the stanza to `cinder.conf` and enable it:
 enabled_backends = truenas
 
 [truenas]
-volume_driver = cinder.volume.drivers.truenas.driver.TrueNASISCSIDriver
+volume_driver = cinder.volume.drivers.truenas.driver.TrueNASDriver
 volume_backend_name = truenas
 truenas_ip = 192.0.2.10
 truenas_login = truenas_admin

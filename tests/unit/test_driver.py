@@ -29,7 +29,7 @@ from cinder import coordination, exception
 from tests.unit import fakes
 from truenas_cinder import client as tn_client
 from truenas_cinder import common
-from truenas_cinder.driver import TrueNASISCSIDriver
+from truenas_cinder.driver import TrueNASDriver
 
 CONF = cfg.CONF
 IQN_BASE = 'iqn.2011-08.org.truenas.ctl'
@@ -48,8 +48,8 @@ class _DriverTestCase(unittest.TestCase):
         self.client = fakes.FakeTrueNASClient()
         self.driver = self._make_driver()
 
-    def _make_driver(self, use_chap: bool = False) -> TrueNASISCSIDriver:
-        driver = TrueNASISCSIDriver(
+    def _make_driver(self, use_chap: bool = False) -> TrueNASDriver:
+        driver = TrueNASDriver(
             configuration=fakes.FakeConfig(
                 reserved_percentage=0, max_over_subscription_ratio=20.0
             ),
@@ -175,7 +175,7 @@ class SnapshotTest(_DriverTestCase):
             kw for name, kw in self.client.calls if name == 'delete_snapshot'
         ]
         self.assertTrue(delete_calls[-1]['defer'])
-        # Snapshot is hidden but survives as the clone's origin.
+        # The snapshot survives as the clone's origin, pending release.
         snap_id = common.snapshot_id(
             self._dataset('vol1'), common.snapshot_name('snap1')
         )
@@ -566,7 +566,7 @@ class StatsAndSetupTest(_DriverTestCase):
         stats = self.driver.get_volume_stats(refresh=True)
         self.assertEqual(stats['storage_protocol'], 'iSCSI')
         self.assertEqual(stats['vendor_name'], 'TrueNAS')
-        self.assertEqual(stats['driver_version'], TrueNASISCSIDriver.VERSION)
+        self.assertEqual(stats['driver_version'], TrueNASDriver.VERSION)
         pool = stats['pools'][0]
         for key in (
             'total_capacity_gb',
