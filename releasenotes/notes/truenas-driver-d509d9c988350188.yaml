@@ -1,7 +1,7 @@
 ---
 features:
   - |
-    Added a new volume driver for TrueNAS SCALE storage appliances,
+    Added a new volume driver for TrueNAS SCALE storage systems,
     ``cinder.volume.drivers.truenas.driver.TrueNASISCSIDriver``. The driver
     provisions each Cinder volume as a ZFS zvol exported over iSCSI, driving
     the TrueNAS WebSocket JSON-RPC API; all host-side attach, detach, and

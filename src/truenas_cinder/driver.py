@@ -135,7 +135,7 @@ class TrueNASISCSIDriver(driver.ISCSIDriver):
         self._backend_name = str(
             conf.safe_get('volume_backend_name') or 'TrueNAS'
         )
-        self._host_address = str(conf.safe_get('san_ip') or '')
+        self._host_address = str(conf.safe_get('truenas_ip') or '')
         self._api_url = str(
             conf.safe_get('truenas_api_url') or self._default_url()
         )
@@ -159,7 +159,7 @@ class TrueNASISCSIDriver(driver.ISCSIDriver):
                 ', '.join(advertised),
             )
 
-        username = str(conf.safe_get('san_login') or 'truenas_admin')
+        username = str(conf.safe_get('truenas_login') or 'truenas_admin')
         api_key = str(conf.safe_get('truenas_api_key') or '')
         self._client.connect(
             self._api_url,

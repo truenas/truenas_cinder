@@ -13,7 +13,7 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-"""Drive ``TrueNASClient`` against a real TrueNAS appliance.
+"""Drive ``TrueNASClient`` against a real TrueNAS system.
 
 This exercises the driver's client adapter directly -- no Cinder, no
 DevStack -- so connection, authentication, response shapes, and the ZFS
@@ -25,14 +25,14 @@ Two modes:
 * **probe** (default) -- read-only. Version preflight, authentication, pool
   and portal lookups, capacity parsing. Creates and changes nothing.
 * **lifecycle** (``--lifecycle``) -- CREATES AND DESTROYS objects on the
-  appliance: a zvol, an iSCSI target/extent, a snapshot, and a clone, all
+  TrueNAS: a zvol, an iSCSI target/extent, a snapshot, and a clone, all
   named with a unique ``smoke-<uuid>`` tag under a dedicated dataset root.
   Everything is torn down in a ``finally`` block. This is the mode that
   validates the promote/defer clone design on real ZFS.
 
 Configuration comes from the environment (flags override):
 
-    TRUENAS_URL or TRUENAS_IP     appliance endpoint
+    TRUENAS_URL or TRUENAS_IP     TrueNAS endpoint
     TRUENAS_API_KEY               API key  (required)
     TRUENAS_USER                  key owner (default: truenas_admin)
     TRUENAS_AUTH_MECHANISM        PLAIN (default) or SCRAM
@@ -154,7 +154,7 @@ def probe(
     if any(ip in ('0.0.0.0', '::') for ip in ips):
         rep.info(
             'wildcard bind detected',
-            'driver substitutes san_ip for the portal address',
+            'driver substitutes truenas_ip for the portal address',
         )
     return portal_id
 

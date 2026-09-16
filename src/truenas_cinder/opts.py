@@ -30,16 +30,16 @@ truenas_opts: list[cfg.Opt] = [
         default=None,
         help='Full WebSocket URL to the TrueNAS API endpoint, e.g. '
         '"wss://truenas.example.com/api/current". If unset it is '
-        'derived from san_ip and truenas_verify_ssl.',
+        'derived from truenas_ip and truenas_verify_ssl.',
     ),
     cfg.StrOpt(
-        'san_ip',
+        'truenas_ip',
         default='',
-        help='Hostname or IP address of the TrueNAS SCALE appliance. Used '
-        'to build the API URL when truenas_api_url is not set.',
+        help='Hostname or IP address of the TrueNAS system. Used to build '
+        'the API URL when truenas_api_url is not set.',
     ),
     cfg.StrOpt(
-        'san_login',
+        'truenas_login',
         default='truenas_admin',
         help='TrueNAS username that owns the configured API key. This is '
         'required for API-key authentication; it is not necessarily "root" '
@@ -49,7 +49,6 @@ truenas_opts: list[cfg.Opt] = [
         'truenas_api_key',
         default=None,
         secret=True,
-        deprecated_name='san_password',
         help='TrueNAS API key used with login_with_api_key. Create it under '
         'Credentials -> Local Users -> API Keys.',
     ),
@@ -67,7 +66,7 @@ truenas_opts: list[cfg.Opt] = [
         'over the TLS-protected connection and is what TrueNAS SCALE 25.10 '
         'supports. SCRAM never transmits the key but requires a server that '
         'implements it (TrueNAS 26 and later). The mechanism is never '
-        'negotiated automatically, so set it to match the appliance.',
+        'negotiated automatically, so set it to match TrueNAS.',
     ),
     # --- Storage layout --------------------------------------------------
     cfg.StrOpt(
