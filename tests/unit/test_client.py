@@ -17,7 +17,7 @@
 ``tests.unit.fakes.FakeTrueNASClient`` replaces this whole class in the driver
 tests, so these tests cover the layer the fake bypasses: JSON-RPC parameter
 shapes, error translation, and property parsing. The response payloads below
-mirror what a TrueNAS SCALE 25.10 appliance actually returns (plain integers
+mirror what a TrueNAS SCALE 25.10 system actually returns (plain integers
 from ``pool.query``, ``{'parsed': ...}`` property objects from
 ``pool.dataset.*``, and an empty-string ``origin`` for a non-clone).
 """
@@ -218,7 +218,7 @@ class ErrorTranslationTest(unittest.TestCase):
     def test_validation_error_enoent_makes_deletes_idempotent(self) -> None:
         client, raw = _connected()
         raw.raises = self._validation_errors(errno.ENOENT)
-        # This is the shape a real appliance returns for an already-removed
+        # This is the shape TrueNAS returns for an already-removed
         # object, so every delete path must still treat it as success.
         client.delete_targetextent(1701)
         client.delete_target(1839)
@@ -369,31 +369,58 @@ class CallShapeTest(unittest.TestCase):
         self.assertEqual(client.available_bytes('tank'), 42)
 
 
+class IscsiGlobalConfigTest(unittest.TestCase):
+    def test_call_shape_and_result(self) -> None:
+        # iscsi.global.config takes no parameters and is not a job.
+        client, raw = _connected(
+            {
+                'id': 1,
+                'basename': 'iqn.2000-01.io.truenas',
+                'listen_port': 3260,
+            }
+        )
+        config = client.iscsi_global_config()
+        self.assertEqual(raw.calls[0], ('iscsi.global.config', ()))
+        self.assertEqual(config['basename'], 'iqn.2000-01.io.truenas')
+        self.assertEqual(config['listen_port'], 3260)
+
+
 class PortalTest(unittest.TestCase):
-    def test_listen_ips_wildcard_is_returned_verbatim(self) -> None:
-        # A real appliance commonly binds 0.0.0.0; the driver resolves it.
+    def test_wildcard_is_returned_verbatim_with_port(self) -> None:
+        # TrueNAS commonly binds 0.0.0.0; the driver resolves the address.
         client, _ = _connected(
             [{'id': 1, 'listen': [{'ip': '0.0.0.0', 'port': 3260}]}]
         )
-        self.assertEqual(client.portal_listen_ips(1), ['0.0.0.0'])
+        self.assertEqual(
+            client.portal_listen_addresses(1), [('0.0.0.0', 3260)]
+        )
 
-    def test_listen_ips_multiple(self) -> None:
+    def test_multiple_addresses_keep_their_own_ports(self) -> None:
         client, _ = _connected(
             [
                 {
                     'id': 1,
                     'listen': [
                         {'ip': '10.0.0.1', 'port': 3260},
-                        {'ip': '10.0.0.2', 'port': 3260},
+                        {'ip': '10.0.0.2', 'port': 3261},
                     ],
                 }
             ]
         )
-        self.assertEqual(client.portal_listen_ips(1), ['10.0.0.1', '10.0.0.2'])
+        self.assertEqual(
+            client.portal_listen_addresses(1),
+            [('10.0.0.1', 3260), ('10.0.0.2', 3261)],
+        )
 
-    def test_listen_ips_missing_portal(self) -> None:
+    def test_missing_port_is_none(self) -> None:
+        client, _ = _connected([{'id': 1, 'listen': [{'ip': '10.0.0.1'}]}])
+        self.assertEqual(
+            client.portal_listen_addresses(1), [('10.0.0.1', None)]
+        )
+
+    def test_missing_portal(self) -> None:
         client, _ = _connected([])
-        self.assertEqual(client.portal_listen_ips(1), [])
+        self.assertEqual(client.portal_listen_addresses(1), [])
 
 
 class OriginParsingTest(unittest.TestCase):

@@ -30,17 +30,30 @@ Every call is recorded in ``calls`` so tests can assert exact sequences.
 
 from typing import Any
 
-from truenas_cinder import common
+from truenas_cinder import common, opts
 from truenas_cinder.exception import TrueNASApiError
 
 JsonDict = dict[str, Any]
 
+#: The iSCSI base name and port a TrueNAS SCALE 25.10 system reports.
+TRUENAS_BASENAME = 'iqn.2000-01.io.truenas'
+TRUENAS_ISCSI_PORT = 3260
+
 
 class FakeConfig:
-    """Minimal stand-in for cinder's Configuration object."""
+    """Minimal stand-in for cinder's Configuration object.
+
+    Starts from the driver's real option defaults, as ``cinder.conf`` would,
+    so an option the test leaves unset reads as its default, not ``None``.
+    Options the driver borrows from Cinder (``use_chap_auth`` and friends)
+    are not pre-filled and read as ``None`` unless given.
+    """
 
     def __init__(self, **options: Any) -> None:
-        self._options: dict[str, Any] = options
+        defaults: dict[str, Any] = {
+            opt.dest: opt.default for opt in opts.truenas_opts
+        }
+        self._options: dict[str, Any] = {**defaults, **options}
 
     def append_config_values(self, opts: list[Any]) -> None:
         return None
@@ -113,8 +126,14 @@ class FakeTrueNASClient:
         }
         self.portal: JsonDict = {
             'id': 1,
-            'listen': [{'ip': '10.0.0.1', 'port': 3260}],
+            'listen': [{'ip': '10.0.0.1', 'port': TRUENAS_ISCSI_PORT}],
         }
+        self.iscsi_global: JsonDict = {
+            'id': 1,
+            'basename': TRUENAS_BASENAME,
+            'listen_port': TRUENAS_ISCSI_PORT,
+        }
+        self.advertised_versions: list[str] = ['v25.04.0', 'v25.10.0']
 
     # -- test helpers ------------------------------------------------------
 
@@ -131,6 +150,38 @@ class FakeTrueNASClient:
     @staticmethod
     def dependency_available() -> bool:
         return True
+
+    # -- connection --------------------------------------------------------
+
+    def connect(
+        self,
+        url: str,
+        username: str,
+        api_key: str,
+        *,
+        verify_ssl: bool = True,
+        timeout: float = 60.0,
+        auth_mechanism: str = 'PLAIN',
+        channel_binding: bool | None = None,
+    ) -> None:
+        self._record(
+            'connect',
+            url=url,
+            username=username,
+            api_key=api_key,
+            verify_ssl=verify_ssl,
+            auth_mechanism=auth_mechanism,
+        )
+
+    def api_versions(
+        self, url: str, *, verify_ssl: bool = True, timeout: float = 10.0
+    ) -> list[str]:
+        self._record('api_versions', url=url, verify_ssl=verify_ssl)
+        return list(self.advertised_versions)
+
+    def iscsi_global_config(self) -> JsonDict:
+        self._record('iscsi_global_config')
+        return dict(self.iscsi_global)
 
     # -- datasets ----------------------------------------------------------
 
@@ -360,10 +411,15 @@ class FakeTrueNASClient:
         self._record('get_portal', portal_id=portal_id)
         return self.portal if portal_id == self.portal['id'] else None
 
-    def portal_listen_ips(self, portal_id: int) -> list[str]:
-        self._record('portal_listen_ips', portal_id=portal_id)
-        listen = self.portal['listen']
-        return [entry['ip'] for entry in listen]
+    def portal_listen_addresses(
+        self, portal_id: int
+    ) -> list[tuple[str, int | None]]:
+        self._record('portal_listen_addresses', portal_id=portal_id)
+        if portal_id != self.portal['id']:
+            return []
+        return [
+            (entry['ip'], entry.get('port')) for entry in self.portal['listen']
+        ]
 
     def available_bytes(self, pool: str) -> int:
         self._record('available_bytes', pool=pool)

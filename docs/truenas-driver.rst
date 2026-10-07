@@ -77,7 +77,9 @@ Prerequisites
   connection time to build the multipath portal list. A wildcard
   (``0.0.0.0``) bind is replaced with ``truenas_ip``.
 
-- The TrueNAS iSCSI service enabled, with a base IQN name configured.
+- The TrueNAS iSCSI service enabled, with a base name (IQN prefix) set in
+  its global configuration. The driver reads the base name and the portal
+  ports from TrueNAS, so neither is configured in ``cinder.conf``.
 
 - TCP 443 (API) and 3260 (iSCSI) reachable from every ``cinder-volume`` host.
 
@@ -104,8 +106,6 @@ Add a backend stanza to ``cinder.conf`` and reference it from
    truenas_pool = tank
    truenas_dataset_root = cinder
    truenas_iscsi_portal_id = 1
-   # iSCSI / IQN base (do not use the deprecated iscsi_target_prefix alias)
-   target_prefix = iqn.2005-10.org.freenas.ctl
    # Provisioning
    truenas_sparse = true
    truenas_volblocksize = 16K
@@ -197,8 +197,12 @@ The driver-specific options are:
      - ``LZ4``
      - ZFS compression algorithm for new zvols.
 
-The driver also honours the standard ``target_prefix`` (the iSCSI IQN base)
-and ``use_chap_auth`` options.
+The driver also honours the standard ``use_chap_auth`` option.
+
+Cinder's generic ``target_prefix`` option is **not** used. TrueNAS publishes
+every target as ``<base name>:<target name>``, so the driver reads the base
+name from TrueNAS's iSCSI global configuration, and each portal address's
+port from the portal itself.
 
 Troubleshooting
 ~~~~~~~~~~~~~~~
@@ -224,8 +228,9 @@ The backend refuses to start rather than half-working, and
      - ``truenas_pool`` is misspelled or the pool is not imported.
    * - ``TrueNAS iSCSI portal N was not found``
      - ``truenas_iscsi_portal_id`` does not match a configured portal.
-   * - ``target_prefix ... must be configured``
-     - Set the IQN base in ``cinder.conf`` and a base name on TrueNAS.
+   * - ``TrueNAS did not report an iSCSI base name``
+     - Set a base name in TrueNAS's iSCSI global configuration. There is
+       nothing to set in ``cinder.conf``.
    * - ``certificate verify failed``
      - TrueNAS presents a self-signed certificate; set
        ``truenas_verify_ssl = false`` on a trusted network.

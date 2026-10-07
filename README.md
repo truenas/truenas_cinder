@@ -100,7 +100,6 @@ truenas_api_key = 16-AbCdEf...
 truenas_pool = tank
 truenas_dataset_root = cinder
 truenas_iscsi_portal_id = 1
-target_prefix = iqn.2005-10.org.freenas.ctl
 # Set false only for a self-signed certificate
 truenas_verify_ssl = true
 ```
@@ -133,7 +132,7 @@ If the backend does not start, `cinder-volume.log` names the exact reason:
 | `SCRAM authentication is not supported` | TrueNAS predates 26. Leave `truenas_auth_mechanism` at its `PLAIN` default. |
 | `TrueNAS pool "…" was not found` | `truenas_pool` is misspelled, or the pool is not imported. |
 | `TrueNAS iSCSI portal N was not found` | Wrong `truenas_iscsi_portal_id` — check *Shares → Block (iSCSI) → Portals*. |
-| `target_prefix … must be configured` | Set the IQN base in `cinder.conf`, and a base name on TrueNAS. |
+| `TrueNAS did not report an iSCSI base name` | Set a base name in TrueNAS's iSCSI global configuration. The driver reads it from TrueNAS; there is nothing to set in `cinder.conf`. |
 | certificate verify failed | Self-signed certificate; set `truenas_verify_ssl = false`. |
 
 ## Licensing

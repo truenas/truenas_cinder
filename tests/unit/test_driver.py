@@ -32,7 +32,7 @@ from truenas_cinder import common
 from truenas_cinder.driver import TrueNASDriver
 
 CONF = cfg.CONF
-IQN_BASE = 'iqn.2011-08.org.truenas.ctl'
+IQN_BASE = fakes.TRUENAS_BASENAME
 
 
 class _DriverTestCase(unittest.TestCase):
@@ -48,25 +48,30 @@ class _DriverTestCase(unittest.TestCase):
         self.client = fakes.FakeTrueNASClient()
         self.driver = self._make_driver()
 
-    def _make_driver(self, use_chap: bool = False) -> TrueNASDriver:
+    def _make_driver(
+        self, use_chap: bool = False, **options: Any
+    ) -> TrueNASDriver:
+        """A driver configured as cinder.conf would, run through do_setup.
+
+        Going through the real do_setup (rather than assigning private
+        attributes) is what exercises option wiring, the IQN base lookup,
+        and portal resolution.
+        """
+        config: dict[str, Any] = {
+            'truenas_ip': '10.0.0.1',
+            'truenas_api_key': '16-testkey',
+            'truenas_pool': 'tank',
+            'use_chap_auth': use_chap,
+            'volume_backend_name': 'TrueNAS',
+            'reserved_percentage': 0,
+            'max_over_subscription_ratio': 20.0,
+        }
+        config.update(options)
         driver = TrueNASDriver(
-            configuration=fakes.FakeConfig(
-                reserved_percentage=0, max_over_subscription_ratio=20.0
-            ),
-            host='host@truenas',
+            configuration=fakes.FakeConfig(**config), host='host@truenas'
         )
         driver._client = cast(tn_client.TrueNASClient, self.client)
-        driver._pool = 'tank'
-        driver._dataset_root = 'cinder'
-        driver._portal_id = 1
-        driver._iqn_base = IQN_BASE
-        driver._host_address = '10.0.0.1'
-        driver._portal_ips = ['10.0.0.1']
-        driver._use_chap = use_chap
-        driver._sparse = True
-        driver._volblocksize = '16K'
-        driver._compression = 'LZ4'
-        driver._backend_name = 'TrueNAS'
+        driver.do_setup(None)
         return driver
 
     def _dataset(self, name_id: str) -> str:
@@ -87,7 +92,7 @@ class VolumeOpsTest(_DriverTestCase):
         self.assertEqual(self.client.datasets[dataset]['refreservation'], 0)
 
     def test_create_volume_thick_sets_refreservation(self) -> None:
-        self.driver._sparse = False
+        self.driver = self._make_driver(truenas_sparse=False)
         vol = fakes.FakeVolume('vol1', size=2)
         self.driver.create_volume(vol)
         dataset = self._dataset('vol1')
@@ -118,7 +123,7 @@ class VolumeOpsTest(_DriverTestCase):
         self.assertEqual(self.client.datasets[dataset]['refreservation'], 0)
 
     def test_extend_volume_thick_updates_refreservation(self) -> None:
-        self.driver._sparse = False
+        self.driver = self._make_driver(truenas_sparse=False)
         vol = fakes.FakeVolume('vol1', size=1)
         self.driver.create_volume(vol)
         self.driver.extend_volume(vol, 5)
@@ -497,7 +502,11 @@ class ExportConnectionTest(_DriverTestCase):
         self.assertEqual(data['target_luns'], [0])
 
     def test_initialize_connection_multiple_portals(self) -> None:
-        self.driver._portal_ips = ['10.0.0.1', '10.0.0.2']
+        self.client.portal['listen'] = [
+            {'ip': '10.0.0.1', 'port': 3260},
+            {'ip': '10.0.0.2', 'port': 3260},
+        ]
+        self.driver = self._make_driver()
         vol = self._make_exported_volume('vol1')
         info = self.driver.initialize_connection(
             vol, {'initiator': 'iqn.host:a'}
@@ -598,12 +607,112 @@ class StatsAndSetupTest(_DriverTestCase):
             self.driver.check_for_setup_error,
         )
 
-    def test_check_for_setup_error_no_iqn_base(self) -> None:
-        self.driver._iqn_base = ''
+    def test_check_for_setup_error_no_basename(self) -> None:
+        self.client.iscsi_global['basename'] = ''
+        self.driver = self._make_driver()
         self.assertRaises(
             exception.VolumeBackendAPIException,
             self.driver.check_for_setup_error,
         )
+
+
+class SetupTest(_DriverTestCase):
+    """do_setup: option wiring, IQN base, and portal resolution."""
+
+    def _attach_data(self, driver: TrueNASDriver) -> dict[str, Any]:
+        vol = fakes.FakeVolume('vol1')
+        driver.create_volume(vol)
+        driver.create_export(None, vol, {})
+        info = driver.initialize_connection(
+            vol, {'initiator': 'iqn.host:a', 'multipath': True}
+        )
+        return info['data']
+
+    def _connect_call(self) -> dict[str, Any]:
+        calls = [kw for name, kw in self.client.calls if name == 'connect']
+        self.assertTrue(calls, 'do_setup never connected')
+        return calls[-1]
+
+    def test_iqn_comes_from_truenas_basename(self) -> None:
+        data = self._attach_data(self.driver)
+        self.assertEqual(
+            data['target_iqn'],
+            f'{fakes.TRUENAS_BASENAME}:{common.target_name("vol1")}',
+        )
+
+    def test_cinder_target_prefix_is_ignored(self) -> None:
+        # Regression: Cinder always supplies a target_prefix default
+        # ('iqn.2010-10.org.openstack:'). Using it produced
+        # 'iqn.2010-10.org.openstack::volume-...' -- a wrong IQN with a
+        # double colon, which only failed later at iSCSI login.
+        driver = self._make_driver(target_prefix='iqn.2010-10.org.openstack:')
+        iqn = self._attach_data(driver)['target_iqn']
+        self.assertTrue(iqn.startswith(f'{fakes.TRUENAS_BASENAME}:'), iqn)
+        self.assertNotIn('openstack', iqn)
+        self.assertNotIn('::', iqn)
+
+    def test_no_driver_option_for_target_prefix(self) -> None:
+        names = [opt.name for opt in TrueNASDriver.get_driver_options()]
+        self.assertNotIn('target_prefix', names)
+
+    def test_portal_port_comes_from_listen_entry(self) -> None:
+        self.client.portal['listen'] = [{'ip': '10.0.0.1', 'port': 3261}]
+        driver = self._make_driver()
+        self.assertEqual(driver._portals, ['10.0.0.1:3261'])
+
+    def test_portal_port_falls_back_to_global_port(self) -> None:
+        self.client.portal['listen'] = [{'ip': '10.0.0.1'}]
+        self.client.iscsi_global['listen_port'] = 3262
+        driver = self._make_driver()
+        self.assertEqual(driver._portals, ['10.0.0.1:3262'])
+
+    def test_wildcard_portal_resolves_to_truenas_ip(self) -> None:
+        self.client.portal['listen'] = [{'ip': '0.0.0.0', 'port': 3260}]
+        driver = self._make_driver(truenas_ip='192.0.2.10')
+        self.assertEqual(driver._portals, ['192.0.2.10:3260'])
+
+    def test_ipv6_portal_is_bracketed(self) -> None:
+        self.client.portal['listen'] = [{'ip': 'fd00::5', 'port': 3260}]
+        driver = self._make_driver()
+        self.assertEqual(driver._portals, ['[fd00::5]:3260'])
+
+    def test_duplicate_portals_are_collapsed(self) -> None:
+        # A wildcard bind plus the same address explicitly would otherwise
+        # hand multipathd two identical paths.
+        self.client.portal['listen'] = [
+            {'ip': '0.0.0.0', 'port': 3260},
+            {'ip': '10.0.0.1', 'port': 3260},
+        ]
+        driver = self._make_driver()
+        self.assertEqual(driver._portals, ['10.0.0.1:3260'])
+
+    def test_connection_options_are_wired_through(self) -> None:
+        call = self._connect_call()
+        self.assertEqual(call['url'], 'wss://10.0.0.1/api/current')
+        self.assertEqual(call['username'], 'truenas_admin')
+        self.assertEqual(call['api_key'], '16-testkey')
+        self.assertEqual(call['auth_mechanism'], 'PLAIN')
+        self.assertTrue(call['verify_ssl'])
+
+    def test_connection_option_overrides(self) -> None:
+        self._make_driver(
+            truenas_login='cinder',
+            truenas_auth_mechanism='SCRAM',
+            truenas_verify_ssl=False,
+            truenas_api_url='wss://truenas.example.com/api/current',
+        )
+        call = self._connect_call()
+        self.assertEqual(call['url'], 'wss://truenas.example.com/api/current')
+        self.assertEqual(call['username'], 'cinder')
+        self.assertEqual(call['auth_mechanism'], 'SCRAM')
+        self.assertFalse(call['verify_ssl'])
+
+    def test_api_version_mismatch_only_warns(self) -> None:
+        self.client.advertised_versions = ['v25.04.0']
+        with self.assertLogs('truenas_cinder.driver', 'WARNING') as logs:
+            driver = self._make_driver()
+        self.assertIn('v25.10.0', logs.output[0])
+        self.assertEqual(driver._iqn_base, fakes.TRUENAS_BASENAME)
 
 
 if __name__ == '__main__':

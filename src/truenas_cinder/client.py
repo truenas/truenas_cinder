@@ -446,30 +446,47 @@ class TrueNASClient:
         """``pool.snapshot.rollback`` (ZFS revert; latest-snapshot only)."""
         self._call('pool.snapshot.rollback', snapshot_id, {'force': force})
 
+    # -- iSCSI global configuration ---------------------------------------
+
+    def iscsi_global_config(self) -> JsonDict:
+        """``iscsi.global.config`` -- system-wide iSCSI settings.
+
+        ``basename`` is the IQN prefix TrueNAS puts in front of every target
+        name, and ``listen_port`` is the default iSCSI port.
+        """
+        return cast('JsonDict', self._call('iscsi.global.config'))
+
     # -- iSCSI portal ------------------------------------------------------
 
     def get_portal(self, portal_id: int) -> JsonDict | None:
         """``iscsi.portal.query`` by id."""
         return self._query_one('iscsi.portal.query', [['id', '=', portal_id]])
 
-    def portal_listen_ips(self, portal_id: int) -> list[str]:
-        """The portal's configured listen IP addresses.
+    def portal_listen_addresses(
+        self, portal_id: int
+    ) -> list[tuple[str, int | None]]:
+        """The portal's listen addresses as ``(ip, port)`` pairs.
 
-        A ``0.0.0.0`` (or ``::``) wildcard bind is returned as-is; the driver
-        resolves it to a routable address.
+        A ``0.0.0.0`` (or ``::``) wildcard bind is returned as-is for the
+        driver to resolve. ``port`` is ``None`` when an entry omits it.
         """
         portal = self.get_portal(portal_id)
         if portal is None:
             return []
         listen = portal.get('listen')
-        ips: list[str] = []
+        addresses: list[tuple[str, int | None]] = []
         if isinstance(listen, list):
             for entry in cast('list[Any]', listen):
-                if isinstance(entry, dict):
-                    ip = cast('JsonDict', entry).get('ip')
-                    if isinstance(ip, str) and ip:
-                        ips.append(ip)
-        return ips
+                if not isinstance(entry, dict):
+                    continue
+                fields = cast('JsonDict', entry)
+                ip = fields.get('ip')
+                if not isinstance(ip, str) or not ip:
+                    continue
+                port = fields.get('port')
+                valid = isinstance(port, int) and not isinstance(port, bool)
+                addresses.append((ip, port if valid else None))
+        return addresses
 
     # -- iSCSI target ------------------------------------------------------
 

@@ -77,8 +77,15 @@ class NamingTest(unittest.TestCase):
 
     def test_target_iqn(self) -> None:
         self.assertEqual(
-            common.target_iqn('iqn.2011-08.org.truenas.ctl', 'volume-abc'),
-            'iqn.2011-08.org.truenas.ctl:volume-abc',
+            common.target_iqn('iqn.2000-01.io.truenas', 'volume-abc'),
+            'iqn.2000-01.io.truenas:volume-abc',
+        )
+
+    def test_target_iqn_never_doubles_the_colon(self) -> None:
+        # Prefixes in the style of Cinder's target_prefix default end in ':'.
+        self.assertEqual(
+            common.target_iqn('iqn.2000-01.io.truenas:', 'volume-abc'),
+            'iqn.2000-01.io.truenas:volume-abc',
         )
 
 

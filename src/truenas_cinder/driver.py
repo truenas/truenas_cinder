@@ -30,7 +30,8 @@ from truenas_cinder import common, opts
 
 LOG = logging.getLogger(__name__)
 
-ISCSI_PORT = 3260
+#: Used only when TrueNAS reports no iSCSI port at all.
+DEFAULT_ISCSI_PORT = 3260
 _WILDCARD_IPS = frozenset({'0.0.0.0', '::'})
 # Safety bound on the promote loop when detaching dependent clones.
 _MAX_PROMOTE_ROUNDS = 64
@@ -96,19 +97,22 @@ class TrueNASDriver(driver.ISCSIDriver):
         self._volblocksize: str = '16K'
         self._compression: str = 'LZ4'
         self._verify_ssl: bool = True
-        self._iqn_base: str = ''
         self._use_chap: bool = False
         self._auth_mechanism: str = tn_client.AUTH_PLAIN
         self._backend_name: str = 'TrueNAS'
         self._host_address: str = ''
         self._api_url: str = ''
-        self._portal_ips: list[str] = []
+        # Read from TrueNAS in do_setup(), never from cinder.conf: TrueNAS
+        # names every target <basename>:<target>, so its basename is the only
+        # correct IQN prefix.
+        self._iqn_base: str = ''
+        # 'host:port' for each portal listen address.
+        self._portals: list[str] = []
 
     @classmethod
     def get_driver_options(cls) -> list[Any]:
         """Options this driver consumes (its own plus inherited base opts)."""
         additional = cls._get_oslo_driver_opts(
-            'target_prefix',
             'use_chap_auth',
             'volume_backend_name',
             'reserved_percentage',
@@ -127,7 +131,6 @@ class TrueNASDriver(driver.ISCSIDriver):
         self._volblocksize = str(conf.safe_get('truenas_volblocksize'))
         self._compression = str(conf.safe_get('truenas_compression'))
         self._verify_ssl = bool(conf.safe_get('truenas_verify_ssl'))
-        self._iqn_base = str(conf.safe_get('target_prefix') or '')
         self._use_chap = bool(conf.safe_get('use_chap_auth'))
         self._auth_mechanism = str(
             conf.safe_get('truenas_auth_mechanism') or tn_client.AUTH_PLAIN
@@ -168,7 +171,9 @@ class TrueNASDriver(driver.ISCSIDriver):
             verify_ssl=self._verify_ssl,
             auth_mechanism=self._auth_mechanism,
         )
-        self._portal_ips = self._resolve_portal_ips()
+        global_config = self._client.iscsi_global_config()
+        self._iqn_base = self._basename_of(global_config)
+        self._portals = self._resolve_portals(self._port_of(global_config))
 
     def _default_url(self) -> str:
         return f'wss://{self._host_address}/api/current'
@@ -185,7 +190,8 @@ class TrueNASDriver(driver.ISCSIDriver):
             )
         if not self._iqn_base:
             raise exception.VolumeBackendAPIException(
-                data='target_prefix (the iSCSI IQN base) must be configured.'
+                data='TrueNAS did not report an iSCSI base name. Set a base '
+                'name in the TrueNAS iSCSI global configuration.'
             )
         if self._client.get_pool(self._pool) is None:
             raise exception.VolumeBackendAPIException(
@@ -206,17 +212,40 @@ class TrueNASDriver(driver.ISCSIDriver):
     def _alias(self, volume: _VolumeObj) -> str:
         return f'Cinder volume {volume.name_id}'
 
-    def _resolve_portal_ips(self) -> list[str]:
-        ips = self._client.portal_listen_ips(self._portal_id)
-        resolved: list[str] = []
-        for ip in ips:
+    @staticmethod
+    def _basename_of(global_config: dict[str, Any]) -> str:
+        basename = global_config.get('basename')
+        return basename.strip() if isinstance(basename, str) else ''
+
+    @staticmethod
+    def _port_of(global_config: dict[str, Any]) -> int:
+        port = global_config.get('listen_port')
+        if isinstance(port, int) and not isinstance(port, bool) and port > 0:
+            return port
+        return DEFAULT_ISCSI_PORT
+
+    @staticmethod
+    def _format_portal(host: str, port: int) -> str:
+        # os-brick expects IPv6 portal addresses in brackets.
+        return f'[{host}]:{port}' if ':' in host else f'{host}:{port}'
+
+    def _resolve_portals(self, default_port: int) -> list[str]:
+        """``host:port`` for each listen address of the configured portal.
+
+        A wildcard bind is replaced with ``truenas_ip``, and an entry that
+        carries no port uses TrueNAS's global iSCSI port.
+        """
+        portals: list[str] = []
+        for ip, port in self._client.portal_listen_addresses(self._portal_id):
+            host = ip
             if ip in _WILDCARD_IPS and self._host_address:
-                resolved.append(self._host_address)
-            else:
-                resolved.append(ip)
-        if not resolved and self._host_address:
-            resolved = [self._host_address]
-        return resolved
+                host = self._host_address
+            portal = self._format_portal(host, port or default_port)
+            if portal not in portals:
+                portals.append(portal)
+        if not portals and self._host_address:
+            portals = [self._format_portal(self._host_address, default_port)]
+        return portals
 
     @staticmethod
     def _parsed_int(dataset: dict[str, Any], key: str) -> int:
@@ -623,10 +652,11 @@ class TrueNASDriver(driver.ISCSIDriver):
         iqn = common.target_iqn(
             self._iqn_base, common.target_name(volume.name_id)
         )
-        portals = [f'{ip}:{ISCSI_PORT}' for ip in self._portal_ips]
+        portals = list(self._portals)
         if not portals:
             raise exception.VolumeBackendAPIException(
-                data=f'No listen IPs resolved for portal {self._portal_id}.'
+                data='No listen addresses resolved for TrueNAS iSCSI portal '
+                f'{self._portal_id}.'
             )
 
         data: dict[str, Any] = {

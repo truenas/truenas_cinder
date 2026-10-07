@@ -121,5 +121,9 @@ def extent_name(name_id: str) -> str:
 
 
 def target_iqn(iqn_base: str, target: str) -> str:
-    """Fully-qualified target IQN: ``<iqn_base>:<target_name>``."""
-    return f'{iqn_base}:{target}'
+    """Fully-qualified target IQN: ``<iqn_base>:<target_name>``.
+
+    A trailing ``:`` on the base is dropped so the result never contains
+    ``::``.
+    """
+    return f'{iqn_base.rstrip(":")}:{target}'

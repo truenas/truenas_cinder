@@ -105,7 +105,7 @@ def portal_id_from_env(client: TrueNASClient, raw: str, rep: Reporter) -> int:
         portal = client.get_portal(portal_id)
         if portal is None:
             continue
-        ips = client.portal_listen_ips(portal_id)
+        ips = [ip for ip, _ in client.portal_listen_addresses(portal_id)]
         if candidate in ips or '0.0.0.0' in ips or '::' in ips:
             rep.info('portal resolved by address', f'{raw} -> id={portal_id}')
             return portal_id
@@ -143,15 +143,33 @@ def probe(
     else:
         rep.fail('zfs.resource.query available', 'parsed 0 bytes free')
 
+    rep.section('iSCSI global configuration')
+    global_config = client.iscsi_global_config()
+    basename = global_config.get('basename')
+    if isinstance(basename, str) and basename.strip():
+        port = global_config.get('listen_port')
+        rep.ok(
+            'iscsi.global.config', f'basename={basename} listen_port={port}'
+        )
+        rep.info(
+            'target IQNs will be', common.target_iqn(basename, 'volume-<id>')
+        )
+    else:
+        rep.fail(
+            'iscsi.global.config',
+            'no base name set -- the driver will refuse to start',
+        )
+
     rep.section('iSCSI portal')
     portal_id = portal_id_from_env(client, args.portal, rep)
     portal = client.get_portal(portal_id)
     if portal is None:
         rep.fail('iscsi.portal.query', f'portal id {portal_id} not found')
         return portal_id
-    ips = client.portal_listen_ips(portal_id)
-    rep.ok('iscsi.portal.query', f'id={portal_id} listen={ips}')
-    if any(ip in ('0.0.0.0', '::') for ip in ips):
+    addresses = client.portal_listen_addresses(portal_id)
+    listen = [f'{ip}:{port}' if port else ip for ip, port in addresses]
+    rep.ok('iscsi.portal.query', f'id={portal_id} listen={listen}')
+    if any(ip in ('0.0.0.0', '::') for ip, _ in addresses):
         rep.info(
             'wildcard bind detected',
             'driver substitutes truenas_ip for the portal address',

@@ -16,9 +16,14 @@
 
 The driver owns its own option group rather than inheriting the SAN option
 group (whose SSH/local-exec options are dead weight for a WebSocket-API
-backend). ``target_prefix`` (the IQN base) and ``use_chap_auth`` are *not*
-redefined here -- they are supplied by Cinder's base volume options and are
-folded in via ``TrueNASDriver.get_driver_options``.
+backend). ``use_chap_auth`` is *not* redefined here -- it is supplied by
+Cinder's base volume options and folded in via
+``TrueNASDriver.get_driver_options``.
+
+There is deliberately no option for the iSCSI IQN prefix or port. Both are
+read from TrueNAS (``iscsi.global.config`` and the portal's listen entries),
+because TrueNAS decides the IQN every target is published under. Cinder's
+generic ``target_prefix`` option is ignored.
 """
 
 from oslo_config import cfg
