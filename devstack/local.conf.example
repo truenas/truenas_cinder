@@ -1,0 +1,95 @@
+# Copyright (c) 2026 TrueNAS
+# All Rights Reserved.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
+#
+# DevStack configuration with the TrueNAS Cinder driver as the only volume
+# backend.
+#
+# devstack/prepare-vm.sh fills in the placeholders (the upper-case names
+# between @ signs) and writes the result to /opt/stack/devstack/local.conf.
+# To use this file by hand instead, copy it there and replace each
+# placeholder yourself. The result contains the TrueNAS API key, so keep it
+# readable only by the stack user.
+
+[[local|localrc]]
+# DevStack's own credentials, internal to this throwaway test cloud.
+ADMIN_PASSWORD=@ADMIN_PASSWORD@
+DATABASE_PASSWORD=$ADMIN_PASSWORD
+RABBIT_PASSWORD=$ADMIN_PASSWORD
+SERVICE_PASSWORD=$ADMIN_PASSWORD
+
+# The address DevStack's services use, and the hypervisor type: kvm, or qemu
+# when the VM has no nested virtualization.
+HOST_IP=@HOST_IP@
+LIBVIRT_TYPE=@LIBVIRT_TYPE@
+
+# Keep the footprint small.
+disable_service horizon
+disable_service c-bak
+
+# --- TrueNAS backend ---------------------------------------------------------
+TRUENAS_IP=@TRUENAS_IP@
+TRUENAS_LOGIN=@TRUENAS_LOGIN@
+TRUENAS_API_KEY=@TRUENAS_API_KEY@
+TRUENAS_VERIFY_SSL=@TRUENAS_VERIFY_SSL@
+TRUENAS_POOL=@TRUENAS_POOL@
+TRUENAS_DATASET_ROOT=@TRUENAS_DATASET_ROOT@
+TRUENAS_PORTAL_ID=@TRUENAS_PORTAL_ID@
+# Set to True once TrueNAS has a second portal address. With a single path
+# there is nothing for multipathd to combine.
+TRUENAS_MULTIPATH=@TRUENAS_MULTIPATH@
+TRUENAS_API_CLIENT_REF=@TRUENAS_API_CLIENT_REF@
+
+# Copies the driver into DevStack's cinder tree and installs the TrueNAS API
+# client before cinder-volume starts. See devstack/README.md.
+enable_plugin truenas-cinder @TRUENAS_CINDER_REPO@ @TRUENAS_CINDER_BRANCH@
+
+# Only the TrueNAS backend. DevStack has no lib/cinder_backends/truenas, so it
+# skips LVM setup and only sets enabled_backends and the default volume type.
+CINDER_ENABLED_BACKENDS=truenas:truenas
+
+# --- Tempest -----------------------------------------------------------------
+enable_plugin cinder-tempest-plugin https://opendev.org/openstack/cinder-tempest-plugin
+ENABLE_VOLUME_MULTIATTACH=True
+# Tempest checks these against the driver's reported volume stats.
+TEMPEST_VOLUME_VENDOR=TrueNAS
+TEMPEST_STORAGE_PROTOCOL=iSCSI
+
+[[post-config|$CINDER_CONF]]
+# DevStack expands the $TRUENAS_* references using the values set above.
+[truenas]
+volume_driver = cinder.volume.drivers.truenas.driver.TrueNASDriver
+volume_backend_name = truenas
+truenas_ip = $TRUENAS_IP
+truenas_login = $TRUENAS_LOGIN
+truenas_api_key = $TRUENAS_API_KEY
+truenas_verify_ssl = $TRUENAS_VERIFY_SSL
+truenas_pool = $TRUENAS_POOL
+truenas_dataset_root = $TRUENAS_DATASET_ROOT
+truenas_iscsi_portal_id = $TRUENAS_PORTAL_ID
+use_multipath_for_image_xfer = $TRUENAS_MULTIPATH
+
+[[post-config|$NOVA_CONF]]
+[libvirt]
+volume_use_multipath = $TRUENAS_MULTIPATH
+
+[[test-config|$TEMPEST_CONFIG]]
+# DevStack only sets these for its LVM backend. Left at Tempest's defaults,
+# the revert and extend-while-attached tests would be skipped while the run
+# still reported success.
+[volume-feature-enabled]
+volume_revert = True
+extend_attached_volume = True
+manage_volume = False
+manage_snapshot = False

@@ -155,3 +155,7 @@ uv run ruff check      # lint
 uv run ruff format     # format
 uv run basedpyright    # type-check (strict)
 ```
+
+To run the driver in a real OpenStack, see [`devstack/README.md`](devstack/README.md):
+it prepares a dedicated VM and runs DevStack with TrueNAS as the only volume
+backend.

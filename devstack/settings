@@ -1,0 +1,43 @@
+# shellcheck shell=bash
+# Copyright (c) 2026 TrueNAS
+# All Rights Reserved.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
+#
+# DevStack settings for the TrueNAS Cinder driver plugin. DevStack sources
+# this after local.conf, so anything set there takes precedence.
+
+# shellcheck disable=SC2034  # read by plugin.sh and local.conf, not here
+
+# Where DevStack clones this plugin (enable_plugin truenas-cinder ...).
+TRUENAS_CINDER_DIR=${TRUENAS_CINDER_DIR:-$DEST/truenas-cinder}
+
+# Copy the driver from this repository into DevStack's cinder tree. Set to
+# False when the cinder tree under test already contains the driver, such as
+# a checkout of the driver's own review.
+TRUENAS_SYNC_DRIVER=$(trueorfalse True TRUENAS_SYNC_DRIVER)
+
+# The TrueNAS API client, installed into DevStack's Python environment.
+# devstack/prepare-vm.sh reads these two defaults, so this is the one place
+# to change the pinned version.
+TRUENAS_API_CLIENT_REPO=${TRUENAS_API_CLIENT_REPO:-https://github.com/truenas/api_client.git}
+TRUENAS_API_CLIENT_REF=${TRUENAS_API_CLIENT_REF:-TS-25.10.7}
+
+# Backend settings used by the [truenas] stanza in local.conf. TRUENAS_IP and
+# TRUENAS_API_KEY have no default and must be set in local.conf.
+TRUENAS_LOGIN=${TRUENAS_LOGIN:-truenas_admin}
+TRUENAS_POOL=${TRUENAS_POOL:-tank}
+TRUENAS_DATASET_ROOT=${TRUENAS_DATASET_ROOT:-devstack}
+TRUENAS_PORTAL_ID=${TRUENAS_PORTAL_ID:-1}
+TRUENAS_VERIFY_SSL=$(trueorfalse True TRUENAS_VERIFY_SSL)
+TRUENAS_MULTIPATH=$(trueorfalse False TRUENAS_MULTIPATH)
