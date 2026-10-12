@@ -78,9 +78,6 @@ reportPrivateUsage = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-[tool.uv.sources]
-truenas-api-client = { git = "https://github.com/truenas/api_client.git" }
-
 [dependency-groups]
 dev = [
     "basedpyright>=1.39.9",
@@ -89,5 +86,23 @@ dev = [
     "oslo-config>=10.4.0",
     "pytest>=9.1.1",
     "ruff>=0.15.21",
-    "truenas-api-client",
+]
+# The driver must work with both generations of the TrueNAS API client. They
+# authenticate differently, and only one can be installed at a time, so each
+# is its own group. tools/test_client_versions.sh runs the tests against both.
+#
+# client-main:  the client's main branch, which adds selectable API-key
+#               mechanisms (PLAIN and SCRAM). The default environment.
+client-main = ["truenas-api-client"]
+# client-25-10: the release the docs and the DevStack plugin install.
+client-25-10 = ["truenas-api-client"]
+
+[tool.uv]
+default-groups = ["dev", "client-main"]
+conflicts = [[{ group = "client-main" }, { group = "client-25-10" }]]
+
+[tool.uv.sources]
+truenas-api-client = [
+    { git = "https://github.com/truenas/api_client.git", group = "client-main" },
+    { git = "https://github.com/truenas/api_client.git", tag = "TS-25.10.7", group = "client-25-10" },
 ]

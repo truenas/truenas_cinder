@@ -60,12 +60,17 @@ DRIVER_MODULES = (
     'client.py',
     'driver.py',
 )
-# Test modules (an __init__.py is generated for the destination package).
-TEST_MODULES = (
-    'fakes.py',
-    'test_common.py',
-    'test_driver.py',
-)
+# Test modules: the shared fakes plus every test_*.py, found at run time so
+# a new test module cannot be left behind. An __init__.py is generated for
+# the destination package; tests/conftest.py is pytest-only and stays here.
+TEST_SUPPORT_MODULES = ('fakes.py',)
+
+
+def find_test_modules() -> list[str]:
+    """Names of the test modules to copy into the cinder tree."""
+    tests = sorted(path.name for path in TEST_PKG.glob('test_*.py'))
+    return [*TEST_SUPPORT_MODULES, *tests]
+
 
 IN_TREE_PKG = 'cinder.volume.drivers.truenas'
 IN_TREE_TEST_PKG = 'cinder.tests.unit.volume.drivers.truenas'
@@ -150,7 +155,7 @@ class Syncer:
 
         # The destination test package needs its own __init__.py.
         self._emit(test_dir / '__init__.py', _INIT_HEADER)
-        for name in TEST_MODULES:
+        for name in find_test_modules():
             self._copy_module(TEST_PKG / name, test_dir / name)
 
 

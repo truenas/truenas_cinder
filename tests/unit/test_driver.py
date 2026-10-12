@@ -46,6 +46,13 @@ class _DriverTestCase(unittest.TestCase):
         coordination.COORDINATOR.start()
         self.addCleanup(coordination.COORDINATOR.stop)
 
+        # The fake client stands in for truenas_api_client, which cinder's
+        # own test run does not install; without this, do_setup would stop
+        # at the missing dependency.
+        patcher = mock.patch.object(tn_client, 'DEPENDENCY_AVAILABLE', True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
         self.client = fakes.FakeTrueNASClient()
         self.driver = self._make_driver()
 

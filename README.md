@@ -156,6 +156,18 @@ uv run ruff format     # format
 uv run basedpyright    # type-check (strict)
 ```
 
+The driver has to work with two generations of the TrueNAS API client, which
+log in differently, and with no client installed, which is how cinder's own
+test run sees it. `uv run pytest` covers only the client in the default
+environment, so before committing, run the tests against all three:
+
+```console
+./tools/test_client_versions.sh    # extra arguments go to pytest
+```
+
+Each run's header names the client it used. The two client releases are
+pinned in `uv.lock` as the `client-main` and `client-25-10` dependency groups.
+
 To run the driver in a real OpenStack, see [`devstack/README.md`](devstack/README.md):
 it prepares a dedicated VM and runs DevStack with TrueNAS as the only volume
 backend.

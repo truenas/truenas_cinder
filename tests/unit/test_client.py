@@ -22,9 +22,13 @@ from ``pool.query``, ``{'parsed': ...}`` property objects from
 ``pool.dataset.*``, and an empty-string ``origin`` for a non-clone).
 """
 
+import enum
 import errno
+import importlib.util
+import inspect
 import unittest
-from typing import Any, cast
+from collections.abc import Callable
+from typing import Any, NamedTuple, cast
 from unittest import mock
 
 from truenas_cinder import client as tn_client
@@ -33,6 +37,48 @@ from truenas_cinder.exception import (
     TrueNASConnectionError,
     TrueNASNotFound,
 )
+
+#: Whether the real client is installed. cinder's own test run does not
+#: install it (it is not in global-requirements), so only the tests that
+#: check the real client depend on it; everything else uses the fakes below.
+CLIENT_INSTALLED = importlib.util.find_spec('truenas_api_client') is not None
+
+
+class _FakeAuthMech(str, enum.Enum):
+    """Stands in for ``truenas_api_client.auth_api_key.APIKeyAuthMech``."""
+
+    PLAIN = 'PLAIN'
+    SCRAM = 'SCRAM'
+
+
+class _FakeClientException(Exception):
+    """Mirrors ``truenas_api_client.exc.ClientException``."""
+
+    def __init__(self, error: str, errno: int | None = None) -> None:
+        super().__init__(error)
+        self.error: str = error
+        self.errno: int | None = errno
+
+
+class _FakeErrorExtra(NamedTuple):
+    """Mirrors ``truenas_api_client.jsonrpc.ErrorExtra``."""
+
+    attribute: str
+    errmsg: str
+    errcode: int
+
+
+class _FakeValidationErrors(_FakeClientException):
+    """Mirrors ``truenas_api_client.exc.ValidationErrors``.
+
+    As in the real class, the error code sits on each entry and the
+    exception itself has no errno -- the shape TrueNAS uses to say an object
+    does not exist.
+    """
+
+    def __init__(self, errors: list[_FakeErrorExtra]) -> None:
+        super().__init__('; '.join(entry.errmsg for entry in errors))
+        self.errors: list[_FakeErrorExtra] = list(errors)
 
 
 class _RecordingRaw:
@@ -80,11 +126,43 @@ def _options(raw: _RecordingRaw, index: int = 0) -> dict[str, Any]:
 class ConnectTest(unittest.TestCase):
     def test_rejects_unknown_auth_mechanism(self) -> None:
         client = tn_client.TrueNASClient()
-        with self.assertRaises(TrueNASConnectionError) as ctx:
-            client.connect(
-                'wss://h/api/current', 'u', 'k', auth_mechanism='MAGIC'
-            )
+        factory = mock.Mock()
+        with mock.patch.object(tn_client, '_client_factory', factory):
+            with self.assertRaises(TrueNASConnectionError) as ctx:
+                client.connect(
+                    'wss://h/api/current', 'u', 'k', auth_mechanism='MAGIC'
+                )
         self.assertIn('MAGIC', str(ctx.exception))
+        # Rejected before any connection is attempted.
+        factory.assert_not_called()
+
+    def test_call_without_connection_raises(self) -> None:
+        client = tn_client.TrueNASClient()
+        self.assertRaises(TrueNASConnectionError, client.ping)
+
+    def test_close_is_idempotent(self) -> None:
+        client, raw = _connected()
+        client.close()
+        self.assertTrue(raw.closed)
+        client.close()
+
+
+class NewerClientAuthTest(unittest.TestCase):
+    """Client releases with selectable API-key mechanisms.
+
+    These have ``login_with_api_key(username, key, mechanism, ...)``. The
+    mechanism enum is faked so these tests exercise this path whichever
+    release is installed.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        patcher = mock.patch.object(tn_client, '_AuthMech', _FakeAuthMech)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_reports_mechanism_support(self) -> None:
+        self.assertTrue(tn_client.TrueNASClient.supports_auth_mechanisms())
 
     def test_passes_mechanism_and_channel_binding(self) -> None:
         client = tn_client.TrueNASClient()
@@ -101,10 +179,12 @@ class ConnectTest(unittest.TestCase):
         self.assertEqual(raw.login_args[0], 'truenas_admin')
         self.assertEqual(raw.login_args[1], 'key')
         # Mechanism is normalised to upper case.
-        self.assertEqual(str(raw.login_args[2]), 'PLAIN')
+        self.assertEqual(raw.login_args[2], _FakeAuthMech.PLAIN)
         assert raw.login_kwargs is not None
         # channel_binding defaults to verify_ssl.
         self.assertFalse(raw.login_kwargs['channel_binding'])
+        # The key-only call is not used on these releases.
+        self.assertEqual(raw.calls, [])
 
     def test_auth_failure_closes_the_connection(self) -> None:
         client = tn_client.TrueNASClient()
@@ -117,10 +197,6 @@ class ConnectTest(unittest.TestCase):
                 client.connect('wss://h/api/current', 'u', 'bad')
         self.assertIn('Invalid API key', str(ctx.exception))
         self.assertTrue(raw.closed)
-
-    def test_call_without_connection_raises(self) -> None:
-        client = tn_client.TrueNASClient()
-        self.assertRaises(TrueNASConnectionError, client.ping)
 
 
 class LegacyClientAuthTest(unittest.TestCase):
@@ -197,12 +273,6 @@ class DependencyErrorTest(unittest.TestCase):
                 )
         self.assertIn("No module named 'websocket'", str(ctx.exception))
 
-    def test_close_is_idempotent(self) -> None:
-        client, raw = _connected()
-        client.close()
-        self.assertTrue(raw.closed)
-        client.close()
-
 
 class ApiVersionsTest(unittest.TestCase):
     def test_parses_version_list(self) -> None:
@@ -246,6 +316,21 @@ class ApiVersionsTest(unittest.TestCase):
 
 
 class ErrorTranslationTest(unittest.TestCase):
+    """Mapping client errors to the driver's exceptions.
+
+    Uses the fake exception classes so it runs without the real client, as
+    in cinder's own test run. InstalledClientContractTest checks the real
+    classes still have the shape the fakes assume.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        patcher = mock.patch.object(
+            tn_client, '_ClientException', _FakeClientException
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _raise(self, exc: BaseException) -> BaseException:
         client, raw = _connected()
         raw.raises = exc
@@ -254,23 +339,20 @@ class ErrorTranslationTest(unittest.TestCase):
         return ctx.exception
 
     def test_enoent_maps_to_not_found(self) -> None:
-        assert tn_client._ClientException is not None
-        exc = tn_client._ClientException('missing', errno.ENOENT)
+        exc = _FakeClientException('missing', errno.ENOENT)
         result = self._raise(exc)
         self.assertIsInstance(result, TrueNASNotFound)
 
     def test_other_errno_maps_to_api_error(self) -> None:
-        assert tn_client._ClientException is not None
-        exc = tn_client._ClientException('boom', errno.EPERM)
+        exc = _FakeClientException('boom', errno.EPERM)
         result = self._raise(exc)
         self.assertIsInstance(result, TrueNASApiError)
         self.assertNotIsInstance(result, TrueNASNotFound)
         self.assertEqual(getattr(result, 'errno', None), errno.EPERM)
 
     def test_not_found_is_swallowed_by_delete_paths(self) -> None:
-        assert tn_client._ClientException is not None
         client, raw = _connected()
-        raw.raises = tn_client._ClientException('gone', errno.ENOENT)
+        raw.raises = _FakeClientException('gone', errno.ENOENT)
         # Every delete is idempotent: "already gone" is success.
         client.delete_dataset('tank/cinder/volume-1')
         client.delete_snapshot('tank/cinder/volume-1@snap')
@@ -281,17 +363,10 @@ class ErrorTranslationTest(unittest.TestCase):
         client.delete_initiator(1)
 
     def _validation_errors(self, *codes: int) -> BaseException:
-        """A ValidationErrors carrying the given per-entry error codes.
-
-        TrueNAS reports "does not exist" this way, and the class sets no
-        top-level errno -- the code lives on each collected entry.
-        """
-        from truenas_api_client.exc import ValidationErrors
-        from truenas_api_client.jsonrpc import ErrorExtra
-
-        return ValidationErrors(
+        """A ValidationErrors carrying the given per-entry error codes."""
+        return _FakeValidationErrors(
             [
-                ErrorExtra('ALL', f'object {i} does not exist', code)
+                _FakeErrorExtra('ALL', f'object {i} does not exist', code)
                 for i, code in enumerate(codes)
             ]
         )
@@ -321,10 +396,83 @@ class ErrorTranslationTest(unittest.TestCase):
         self.assertNotIsInstance(result, TrueNASNotFound)
 
     def test_get_dataset_missing_returns_none(self) -> None:
-        assert tn_client._ClientException is not None
         client, raw = _connected()
-        raw.raises = tn_client._ClientException('gone', errno.ENOENT)
+        raw.raises = _FakeClientException('gone', errno.ENOENT)
         self.assertIsNone(client.get_dataset('tank/nope'))
+
+
+@unittest.skipUnless(CLIENT_INSTALLED, 'truenas_api_client is not installed')
+class InstalledClientContractTest(unittest.TestCase):
+    """Checks the real, installed client against what the driver relies on.
+
+    tools/test_client_versions.sh runs this against every supported client
+    release, so a release that lacks or changes something the driver uses
+    fails here instead of on a TrueNAS system. It also confirms the fakes
+    used elsewhere in this module still match the real classes.
+    """
+
+    def test_driver_can_import_it(self) -> None:
+        # Regression: importing a module the TS-25.10 releases lack made the
+        # driver report an installed client as missing.
+        self.assertTrue(
+            tn_client.TrueNASClient.dependency_available(),
+            tn_client.TrueNASClient.dependency_error(),
+        )
+
+    def test_constructor_takes_the_driver_arguments(self) -> None:
+        assert tn_client._client_factory is not None
+        inspect.signature(tn_client._client_factory).bind_partial(
+            uri='wss://h/api/current', verify_ssl=False, call_timeout=1.0
+        )
+
+    def test_call_and_close_take_the_driver_arguments(self) -> None:
+        from truenas_api_client import JSONRPCClient
+
+        # getattr: the client leaves call()'s *params unannotated, and what
+        # matters here is the runtime signature anyway.
+        call = cast('Callable[..., object]', JSONRPCClient.call)
+        inspect.signature(call).bind(object(), 'pool.query', [], {})
+        inspect.signature(JSONRPCClient.close).bind(object())
+
+    @unittest.skipUnless(
+        tn_client.TrueNASClient.supports_auth_mechanisms(),
+        'this release authenticates with the key alone',
+    )
+    def test_login_takes_every_driver_mechanism(self) -> None:
+        from truenas_api_client import JSONRPCClient
+
+        assert tn_client._AuthMech is not None
+        login = inspect.signature(JSONRPCClient.login_with_api_key)
+        for name in tn_client.AUTH_MECHANISMS:
+            login.bind(
+                object(),
+                'truenas_admin',
+                '16-key',
+                tn_client._AuthMech(name),
+                channel_binding=False,
+            )
+
+    def test_client_exception_has_the_faked_attributes(self) -> None:
+        from truenas_api_client.exc import ClientException
+
+        exc = ClientException('boom', errno.EPERM)
+        self.assertEqual((exc.error, exc.errno), ('boom', errno.EPERM))
+        result = tn_client.TrueNASClient._translate('pool.query', exc)
+        self.assertIsInstance(result, TrueNASApiError)
+
+    def test_not_found_validation_error_maps_to_not_found(self) -> None:
+        # The real class, unpatched: no top-level errno, the code is on
+        # each entry -- the shape that once made every delete fail.
+        from truenas_api_client.exc import ValidationErrors
+        from truenas_api_client.jsonrpc import ErrorExtra
+
+        exc = ValidationErrors([ErrorExtra('ALL', 'gone', errno.ENOENT)])
+        self.assertIsNone(exc.errno)
+        # getattr: the client leaves the errors list unannotated.
+        entries = cast('list[ErrorExtra]', exc.errors)
+        self.assertEqual(entries[0].errcode, errno.ENOENT)
+        result = tn_client.TrueNASClient._translate('pool.query', exc)
+        self.assertIsInstance(result, TrueNASNotFound)
 
 
 class CallShapeTest(unittest.TestCase):

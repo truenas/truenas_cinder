@@ -63,9 +63,12 @@ any in-fork changes.
 | `src/truenas_cinder/client.py`         | `cinder/volume/drivers/truenas/client.py` |
 | `src/truenas_cinder/driver.py`         | `cinder/volume/drivers/truenas/driver.py` |
 | `tests/unit/fakes.py`                  | `cinder/tests/unit/volume/drivers/truenas/fakes.py` |
-| `tests/unit/test_common.py`            | `cinder/tests/unit/volume/drivers/truenas/test_common.py` |
-| `tests/unit/test_driver.py`            | `cinder/tests/unit/volume/drivers/truenas/test_driver.py` |
+| `tests/unit/test_*.py` (every one)     | `cinder/tests/unit/volume/drivers/truenas/test_*.py` |
 | _(generated)_                          | `cinder/tests/unit/volume/drivers/truenas/__init__.py` |
+
+Test modules are found when the tool runs, so a new `test_*.py` is copied
+without editing the tool. Today that is `test_client.py`, `test_common.py`,
+and `test_driver.py`.
 
 ## Import rewrites
 
@@ -102,6 +105,11 @@ prints this checklist after a successful run:
 
 ## Not synced
 
-The dev repo's `stubs/` (hand-written cinder type stubs for basedpyright) and
-`pyproject.toml` are dev-only and are intentionally left behind — the cinder
-tree provides the real packages and its own tooling.
+The dev repo's `stubs/` (hand-written cinder type stubs for basedpyright),
+`pyproject.toml`, and `tests/conftest.py` (pytest-only) are dev-only and are
+intentionally left behind — the cinder tree provides the real packages and its
+own tooling.
+
+The copied tests pass without the TrueNAS API client installed, because the
+cinder tree does not install it: `./tools/test_client_versions.sh` checks this
+in its `no-client` run.
