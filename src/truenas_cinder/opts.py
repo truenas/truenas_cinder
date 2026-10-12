@@ -46,15 +46,17 @@ truenas_opts: list[cfg.Opt] = [
     cfg.StrOpt(
         'truenas_login',
         default='truenas_admin',
-        help='TrueNAS username that owns the configured API key. This is '
-        'required for API-key authentication; it is not necessarily "root" '
-        '(recent TrueNAS SCALE releases use "truenas_admin").',
+        help='TrueNAS username that owns the configured API key. Newer '
+        'truenas_api_client releases (the TrueNAS 26 series, needed for '
+        'SCRAM) send it when authenticating; TS-25.10 releases use the key '
+        'alone. It is not necessarily "root": recent TrueNAS SCALE '
+        'releases use "truenas_admin".',
     ),
     cfg.StrOpt(
         'truenas_api_key',
         default=None,
         secret=True,
-        help='TrueNAS API key used with login_with_api_key. Create it under '
+        help='TrueNAS API key used to authenticate. Create it under '
         'Credentials -> Local Users -> API Keys.',
     ),
     cfg.BoolOpt(
@@ -69,9 +71,10 @@ truenas_opts: list[cfg.Opt] = [
         choices=('PLAIN', 'SCRAM'),
         help='API-key authentication mechanism. PLAIN transmits the API key '
         'over the TLS-protected connection and is what TrueNAS SCALE 25.10 '
-        'supports. SCRAM never transmits the key but requires a server that '
-        'implements it (TrueNAS 26 and later). The mechanism is never '
-        'negotiated automatically, so set it to match TrueNAS.',
+        'supports. SCRAM never transmits the key but needs TrueNAS 26 or '
+        'later and a truenas_api_client release from the TrueNAS 26 series. '
+        'The mechanism is never negotiated automatically, so set it to '
+        'match TrueNAS.',
     ),
     # --- Storage layout --------------------------------------------------
     cfg.StrOpt(

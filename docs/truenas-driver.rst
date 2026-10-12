@@ -68,9 +68,10 @@ Prerequisites
 
 - A TrueNAS **API key** for a user with permission to manage datasets and
   iSCSI sharing (*Credentials* → *Local Users* → pick the user → *API Keys*).
-  Note **which user** owns it: ``truenas_login`` must name that exact user,
-  and on current TrueNAS SCALE it is usually ``truenas_admin`` rather than
-  ``root``.
+  Set ``truenas_login`` to the user that owns it -- on current TrueNAS SCALE
+  usually ``truenas_admin`` rather than ``root``. The ``TS-25.10`` client
+  authenticates with the key alone, but newer client releases (needed for
+  SCRAM) also send the user and reject a mismatch.
 
 - An **iSCSI portal** configured on TrueNAS (*Shares* → *Block (iSCSI)* →
   *Portals*). Note its ID; the portal's listen addresses are read at
@@ -113,7 +114,7 @@ Add a backend stanza to ``cinder.conf`` and reference it from
    # Optional CHAP
    use_chap_auth = false
 
-``truenas_login`` must be the user that owns ``truenas_api_key``. When
+``truenas_login`` should name the user that owns ``truenas_api_key``. When
 ``truenas_api_url`` is not set, the endpoint is derived as
 ``wss://<truenas_ip>/api/current``.
 
@@ -162,8 +163,9 @@ The driver-specific options are:
      - Hostname or IP of the TrueNAS system.
    * - ``truenas_login``
      - ``truenas_admin``
-     - TrueNAS user that owns the API key. Must match the key's owner
-       exactly.
+     - TrueNAS user that owns the API key. Sent by newer client releases
+       (the TrueNAS 26 series); ``TS-25.10`` releases authenticate with
+       the key alone.
    * - ``truenas_api_key``
      - (none)
      - TrueNAS API key used to authenticate.
@@ -171,7 +173,8 @@ The driver-specific options are:
      - ``PLAIN``
      - API-key mechanism. ``PLAIN`` sends the key over the TLS-protected
        connection and is what TrueNAS SCALE 25.10 supports; ``SCRAM`` never
-       transmits the key but needs TrueNAS 26 or later. Never negotiated
+       transmits the key but needs TrueNAS 26 or later and a client
+       release from the TrueNAS 26 series. Never negotiated
        automatically.
    * - ``truenas_verify_ssl``
      - ``true``
@@ -216,14 +219,20 @@ The backend refuses to start rather than half-working, and
 
    * - Message
      - Cause and fix
-   * - ``truenas_api_client is not installed``
-     - The package is absent from the environment the service runs in.
-       Re-install it with ``cinder-volume``'s own interpreter.
+   * - ``truenas_api_client could not be imported``
+     - The message says why. ``No module named 'truenas_api_client'``
+       means it is absent from the environment the service runs in:
+       re-install it with ``cinder-volume``'s own interpreter. Any other
+       missing module means the install is incomplete.
    * - ``Invalid API key``
-     - ``truenas_login`` does not name the user that owns the key (try
-       ``truenas_admin``), or the key has been revoked.
+     - The key is wrong or has been revoked. With a newer client release,
+       also check that ``truenas_login`` names the key's owner (try
+       ``truenas_admin``).
    * - ``SCRAM authentication is not supported on the remote server``
      - TrueNAS predates 26. Leave ``truenas_auth_mechanism`` at ``PLAIN``.
+   * - ``the installed truenas_api_client cannot do SCRAM``
+     - Install a client release from the TrueNAS 26 series, or leave
+       ``truenas_auth_mechanism`` at ``PLAIN``.
    * - ``TrueNAS pool "..." was not found``
      - ``truenas_pool`` is misspelled or the pool is not imported.
    * - ``TrueNAS iSCSI portal N was not found``

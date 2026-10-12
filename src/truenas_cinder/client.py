@@ -41,14 +41,25 @@ from truenas_cinder.exception import (
 )
 
 # --- Lazy import of the external client (not in global-requirements) ------
+#: Why the client could not be imported, reported instead of a bare
+#: "not installed" -- the package may be present but broken.
+_import_error: str | None = None
 try:
     from truenas_api_client import Client as _client_factory
-    from truenas_api_client.auth_api_key import APIKeyAuthMech as _AuthMech
     from truenas_api_client.exc import ClientException as _ClientException
-except ImportError:  # pragma: no cover - exercised via check_for_setup_error
+except ImportError as _exc:  # pragma: no cover - see check_for_setup_error
     _client_factory = None
-    _AuthMech = None
     _ClientException = None
+    _import_error = str(_exc)
+
+# Selectable API-key mechanisms (PLAIN through auth.login_ex, and SCRAM) only
+# exist in newer client releases. The TS-25.10 releases predate them and send
+# the key with the auth.login_with_api_key call, which TrueNAS 25.10 accepts,
+# so their absence is not an error.
+try:
+    from truenas_api_client.auth_api_key import APIKeyAuthMech as _AuthMech
+except ImportError:
+    _AuthMech = None
 
 #: API-key authentication mechanisms.
 #:
@@ -107,6 +118,25 @@ class TrueNASClient:
         """Whether the ``truenas_api_client`` dependency is installed."""
         return DEPENDENCY_AVAILABLE
 
+    @staticmethod
+    def dependency_error() -> str | None:
+        """Why ``truenas_api_client`` could not be imported, if it could not.
+
+        Distinguishes a missing package (``No module named
+        'truenas_api_client'``) from a present but broken one, such as a
+        missing dependency of the client.
+        """
+        return _import_error
+
+    @staticmethod
+    def supports_auth_mechanisms() -> bool:
+        """Whether the installed client can select PLAIN or SCRAM.
+
+        False for TS-25.10 client releases, which authenticate with the key
+        alone through ``auth.login_with_api_key``.
+        """
+        return _AuthMech is not None
+
     def connect(
         self,
         url: str,
@@ -127,8 +157,7 @@ class TrueNASClient:
         """
         if _client_factory is None:
             raise TrueNASConnectionError(
-                'truenas_api_client is not installed; install it to use the '
-                'TrueNAS Cinder driver.'
+                f'truenas_api_client could not be imported ({_import_error}).'
             )
         mechanism = auth_mechanism.upper()
         if mechanism not in AUTH_MECHANISMS:
@@ -145,18 +174,57 @@ class TrueNASClient:
                     uri=url, verify_ssl=verify_ssl, call_timeout=timeout
                 ),
             )
+        except Exception as exc:
+            raise TrueNASConnectionError(
+                f'Failed to connect to TrueNAS at {url}: {exc}'
+            ) from exc
+        try:
+            self._authenticate(
+                raw, username, api_key, mechanism, channel_binding
+            )
+        except Exception as exc:
+            # Don't leave an unauthenticated connection open.
+            try:
+                raw.close()
+            except Exception:  # pragma: no cover - best effort
+                pass
+            raise TrueNASConnectionError(
+                f'Failed to authenticate to TrueNAS at {url} using '
+                f'{mechanism}: {exc}'
+            ) from exc
+        self._client = raw
+
+    @staticmethod
+    def _authenticate(
+        raw: _RawClient,
+        username: str,
+        api_key: str,
+        mechanism: str,
+        channel_binding: bool,
+    ) -> None:
+        """Log in with whichever API-key method the installed client has."""
+        if _AuthMech is not None:
+            # Newer clients: PLAIN goes through auth.login_ex, which needs
+            # the key owner's username, and SCRAM is available.
             raw.login_with_api_key(
                 username,
                 api_key,
-                _AuthMech(mechanism) if _AuthMech is not None else mechanism,
+                _AuthMech(mechanism),
                 channel_binding=channel_binding,
             )
-        except Exception as exc:
-            raise TrueNASConnectionError(
-                f'Failed to connect/authenticate to TrueNAS at {url} as '
-                f'{username!r} using {mechanism}: {exc}'
-            ) from exc
-        self._client = raw
+            return
+        # TS-25.10 clients send the key alone, so the login name is unused.
+        if mechanism == AUTH_SCRAM:
+            raise ValueError(
+                'the installed truenas_api_client cannot do SCRAM; it needs '
+                'a release from the TrueNAS 26 series. Install one, or set '
+                'truenas_auth_mechanism = PLAIN'
+            )
+        if raw.call('auth.login_with_api_key', api_key) is not True:
+            raise ValueError(
+                'Invalid API key (this truenas_api_client release sends the '
+                'key alone, so the login name is not involved)'
+            )
 
     @staticmethod
     def api_versions(

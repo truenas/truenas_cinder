@@ -22,6 +22,7 @@ would (dependent-clone blocking, defer, promote-on-delete).
 import tempfile
 import unittest
 from typing import Any, cast
+from unittest import mock
 
 from oslo_config import cfg
 
@@ -592,6 +593,18 @@ class StatsAndSetupTest(_DriverTestCase):
 
     def test_check_for_setup_error_ok(self) -> None:
         self.driver.check_for_setup_error()
+
+    def test_check_for_setup_error_reports_import_error(self) -> None:
+        # The real reason must reach the log, not just "not installed".
+        with (
+            mock.patch.object(tn_client, 'DEPENDENCY_AVAILABLE', False),
+            mock.patch.object(
+                tn_client, '_import_error', "No module named 'websocket'"
+            ),
+        ):
+            with self.assertRaises(exception.VolumeBackendAPIException) as ctx:
+                self.driver.check_for_setup_error()
+        self.assertIn("No module named 'websocket'", str(ctx.exception))
 
     def test_check_for_setup_error_no_pool(self) -> None:
         self.driver._pool = ''

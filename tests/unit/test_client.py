@@ -106,9 +106,96 @@ class ConnectTest(unittest.TestCase):
         # channel_binding defaults to verify_ssl.
         self.assertFalse(raw.login_kwargs['channel_binding'])
 
+    def test_auth_failure_closes_the_connection(self) -> None:
+        client = tn_client.TrueNASClient()
+        raw = _RecordingRaw()
+        raw.login_with_api_key = mock.Mock(  # type: ignore[method-assign]
+            side_effect=ValueError('Invalid API key')
+        )
+        with mock.patch.object(tn_client, '_client_factory', return_value=raw):
+            with self.assertRaises(TrueNASConnectionError) as ctx:
+                client.connect('wss://h/api/current', 'u', 'bad')
+        self.assertIn('Invalid API key', str(ctx.exception))
+        self.assertTrue(raw.closed)
+
     def test_call_without_connection_raises(self) -> None:
         client = tn_client.TrueNASClient()
         self.assertRaises(TrueNASConnectionError, client.ping)
+
+
+class LegacyClientAuthTest(unittest.TestCase):
+    """TS-25.10 client releases have no selectable mechanisms.
+
+    They predate ``truenas_api_client.auth_api_key`` and the
+    ``login_with_api_key`` method, and authenticate by sending the key with
+    ``auth.login_with_api_key``. That is the release the docs pin, so the
+    driver must work with it.
+    """
+
+    def _connect(
+        self, login_result: object, mechanism: str = 'PLAIN'
+    ) -> _RecordingRaw:
+        raw = _RecordingRaw(login_result)
+        client = tn_client.TrueNASClient()
+        with (
+            mock.patch.object(tn_client, '_AuthMech', None),
+            mock.patch.object(tn_client, '_client_factory', return_value=raw),
+        ):
+            client.connect(
+                'wss://h/api/current',
+                'truenas_admin',
+                '16-key',
+                auth_mechanism=mechanism,
+            )
+        return raw
+
+    def test_reports_no_mechanism_support(self) -> None:
+        with mock.patch.object(tn_client, '_AuthMech', None):
+            self.assertFalse(
+                tn_client.TrueNASClient.supports_auth_mechanisms()
+            )
+
+    def test_plain_sends_the_key_alone(self) -> None:
+        raw = self._connect(True)
+        self.assertEqual(raw.calls, [('auth.login_with_api_key', ('16-key',))])
+        # The newer login method does not exist on these releases.
+        self.assertIsNone(raw.login_args)
+
+    def test_rejected_key_raises_and_closes(self) -> None:
+        with self.assertRaises(TrueNASConnectionError) as ctx:
+            self._connect(False)
+        self.assertIn('Invalid API key', str(ctx.exception))
+
+    def test_scram_is_refused_without_calling_truenas(self) -> None:
+        raw = _RecordingRaw(True)
+        client = tn_client.TrueNASClient()
+        with (
+            mock.patch.object(tn_client, '_AuthMech', None),
+            mock.patch.object(tn_client, '_client_factory', return_value=raw),
+        ):
+            with self.assertRaises(TrueNASConnectionError) as ctx:
+                client.connect(
+                    'wss://h/api/current', 'u', 'k', auth_mechanism='SCRAM'
+                )
+        self.assertIn('SCRAM', str(ctx.exception))
+        self.assertEqual(raw.calls, [])
+        self.assertTrue(raw.closed)
+
+
+class DependencyErrorTest(unittest.TestCase):
+    def test_import_error_is_reported_not_hidden(self) -> None:
+        # A present-but-broken install must not read as "not installed".
+        with (
+            mock.patch.object(tn_client, '_client_factory', None),
+            mock.patch.object(
+                tn_client, '_import_error', "No module named 'websocket'"
+            ),
+        ):
+            with self.assertRaises(TrueNASConnectionError) as ctx:
+                tn_client.TrueNASClient().connect(
+                    'wss://h/api/current', 'u', 'k'
+                )
+        self.assertIn("No module named 'websocket'", str(ctx.exception))
 
     def test_close_is_idempotent(self) -> None:
         client, raw = _connected()

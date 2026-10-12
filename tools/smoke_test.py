@@ -434,8 +434,18 @@ def main(argv: list[str] | None = None) -> int:
 
     client = TrueNASClient()
     if not client.dependency_available():
-        rep.fail('truenas_api_client', 'not installed')
+        rep.fail(
+            'truenas_api_client',
+            f'could not be imported: {client.dependency_error()}',
+        )
         return 1
+    if client.supports_auth_mechanisms():
+        rep.info('truenas_api_client', 'newer release: PLAIN and SCRAM')
+    else:
+        rep.info(
+            'truenas_api_client',
+            'TS-25.10 release: authenticates with the key alone',
+        )
     try:
         client.connect(
             url,

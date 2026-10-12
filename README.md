@@ -32,10 +32,11 @@ Also confirm TrueNAS runs API `v25.10.0` or later, the iSCSI service is
 enabled with a base name (IQN) set, and that TCP 443 and 3260 are reachable
 from every `cinder-volume` host.
 
-> **The username matters.** API-key authentication fails unless
-> `truenas_login` is the exact user the key belongs to. On current TrueNAS
-> SCALE that is usually `truenas_admin` — **`root` and `admin` will fail**
-> with `Invalid API key`.
+> **Set `truenas_login` to the user that owns the key.** The `TS-25.10`
+> client installed below authenticates with the key alone, but newer client
+> releases (needed for SCRAM) also send the user and reject a mismatch with
+> `Invalid API key`. On current TrueNAS SCALE the owner is usually
+> `truenas_admin`, not `root` or `admin`.
 
 ### 1. Install the TrueNAS API client
 
@@ -127,9 +128,10 @@ If the backend does not start, `cinder-volume.log` names the exact reason:
 
 | Message | Cause and fix |
 | ------- | ------------- |
-| `truenas_api_client is not installed` | Step 1 went into the wrong environment. Re-run it with the service's own interpreter. |
-| `Invalid API key` | `truenas_login` is not the user the key belongs to (try `truenas_admin`), or the key was revoked. |
+| `truenas_api_client could not be imported` | The message says why. `No module named 'truenas_api_client'` means step 1 went into the wrong environment: re-run it with the service's own interpreter. Any other missing module means the install is incomplete: reinstall it. |
+| `Invalid API key` | The key is wrong or was revoked. With a newer client release, also check that `truenas_login` is the key's owner (try `truenas_admin`). |
 | `SCRAM authentication is not supported` | TrueNAS predates 26. Leave `truenas_auth_mechanism` at its `PLAIN` default. |
+| `the installed truenas_api_client cannot do SCRAM` | Install a client release from the TrueNAS 26 series, or leave `truenas_auth_mechanism` at `PLAIN`. |
 | `TrueNAS pool "…" was not found` | `truenas_pool` is misspelled, or the pool is not imported. |
 | `TrueNAS iSCSI portal N was not found` | Wrong `truenas_iscsi_portal_id` — check *Shares → Block (iSCSI) → Portals*. |
 | `TrueNAS did not report an iSCSI base name` | Set a base name in TrueNAS's iSCSI global configuration. The driver reads it from TrueNAS; there is nothing to set in `cinder.conf`. |
