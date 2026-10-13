@@ -44,10 +44,11 @@ would write, without changing anything:
 ./devstack/prepare-vm.sh --dry-run
 ```
 
-Then prepare the VM. `-E` keeps your exports:
+Then prepare the VM. Run it as yourself, not with `sudo`: it re-runs itself
+with `sudo`, carrying your settings across, which plain `sudo` would drop.
 
 ```console
-sudo -E ./devstack/prepare-vm.sh
+./devstack/prepare-vm.sh
 ```
 
 This installs the iSCSI initiator and multipath tools, checks your TrueNAS
@@ -124,7 +125,7 @@ python3 tools/sync_to_cinder.py /opt/stack/cinder --force
 sudo systemctl restart devstack@c-vol
 ```
 
-To redeploy from scratch instead, re-run `sudo -E ./devstack/prepare-vm.sh`,
+To redeploy from scratch instead, re-run `./devstack/prepare-vm.sh`,
 then `./unstack.sh && ./stack.sh` as the `stack` user. `prepare-vm.sh` removes
 DevStack's previous copy of the plugin so the new commit is used; DevStack
 otherwise never updates a plugin it has already cloned.

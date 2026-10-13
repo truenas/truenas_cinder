@@ -32,22 +32,34 @@ readonly PLUGIN_SRC=$STACK_HOME/src/truenas_cinder
 readonly PLUGIN_CLONE=$STACK_HOME/truenas-cinder
 readonly TEMPLATE=$SCRIPT_DIR/local.conf.example
 
+# Every setting resolve_settings() reads from the environment. When the
+# script re-runs itself as root, exactly these are carried across.
+readonly SETTINGS_VARS=(
+    TRUENAS_IP TRUENAS_URL TRUENAS_API_KEY TRUENAS_LOGIN TRUENAS_USER
+    TRUENAS_POOL TRUENAS_PORTAL_ID TRUENAS_DATASET_ROOT TRUENAS_VERIFY_SSL
+    TRUENAS_INSECURE_SKIP_VERIFY TRUENAS_MULTIPATH TRUENAS_API_CLIENT_REPO
+    TRUENAS_API_CLIENT_REF ADMIN_PASSWORD DEVSTACK_BRANCH HOST_IP LIBVIRT_TYPE
+)
+
 DRY_RUN=False
 RUN_STACK=False
 CLEANUP_DIRS=()
 
 usage() {
     cat <<'EOF'
-Prepare a dedicated Ubuntu 24.04 or 26.04 VM to run DevStack with the TrueNAS Cinder
-driver as its only volume backend.
+Prepare a dedicated Ubuntu 24.04 or 26.04 VM to run DevStack with the
+TrueNAS Cinder driver as its only volume backend.
 
 Run it from a checkout of this repository on the VM:
 
   export TRUENAS_IP=192.0.2.10
   export TRUENAS_API_KEY=16-AbCdEf...
-  ./devstack/prepare-vm.sh --dry-run        check and preview; changes nothing
-  sudo -E ./devstack/prepare-vm.sh          prepare the VM
-  sudo -E ./devstack/prepare-vm.sh --stack  prepare, then run stack.sh
+  ./devstack/prepare-vm.sh --dry-run   check and preview; changes nothing
+  ./devstack/prepare-vm.sh             prepare the VM
+  ./devstack/prepare-vm.sh --stack     prepare, then run stack.sh
+
+Run it as yourself, not with sudo: it re-runs itself with sudo, carrying
+the settings below across (plain sudo would drop them).
 
 Settings, read from the environment:
 
@@ -106,6 +118,24 @@ normalize_bool() {
 
 as_stack() {
     sudo -u "$STACK_USER" -H -- "$@"
+}
+
+# Re-run this script as root, carrying only the settings above. Uses
+# --preserve-env=LIST rather than -E because sudo-rs, the sudo on Ubuntu
+# 26.04, does not support -E; classic sudo accepts the same option.
+become_root() {
+    if [[ $EUID -eq 0 ]]; then
+        return
+    fi
+    command -v sudo >/dev/null || die "run this as root (sudo is not installed)"
+    local keep
+    keep=$(
+        IFS=,
+        echo "${SETTINGS_VARS[*]}"
+    )
+    log "Re-running as root with sudo"
+    exec sudo --preserve-env="$keep" -- \
+        "$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")" "$@"
 }
 
 parse_args() {
@@ -497,14 +527,17 @@ dry_run_report() {
 
 main() {
     parse_args "$@"
+    # Validate the settings before asking for sudo.
     resolve_settings
+    if [[ "$DRY_RUN" != True ]]; then
+        become_root "$@"
+    fi
     preflight_host
     if [[ "$DRY_RUN" == True ]]; then
         preflight_network
         dry_run_report
         return
     fi
-    [[ $EUID -eq 0 ]] || die "run as root, keeping your exports: sudo -E $0"
 
     preflight_network
     install_packages
