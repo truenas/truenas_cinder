@@ -327,6 +327,7 @@ class FakeTrueNASClient:
             'dataset': clone_path,
             'name': snap['name'],
             'deferred': snap['deferred'],
+            'txg': snap['txg'],
         }
         del self.snapshots[origin]
         # Any dataset that referenced the old origin now references the moved
@@ -379,6 +380,8 @@ class FakeTrueNASClient:
             'dataset': dataset,
             'name': name,
             'deferred': False,
+            # Creation order, which decides what a rollback must pass over.
+            'txg': self._next_id('txg'),
         }
         return {'id': snap_id, 'dataset': dataset, 'name': name}
 
@@ -440,8 +443,21 @@ class FakeTrueNASClient:
         self, snapshot_id: str, *, force: bool = True
     ) -> None:
         self._record('rollback_snapshot', snapshot_id=snapshot_id)
-        if snapshot_id not in self.snapshots:
+        snap = self.snapshots.get(snapshot_id)
+        if snap is None:
             raise TrueNASApiError(f'no such snapshot {snapshot_id}')
+        # ZFS rolls back only to the newest snapshot; the driver never asks
+        # for newer ones to be destroyed.
+        newer = sorted(
+            sid
+            for sid, s in self.snapshots.items()
+            if s['dataset'] == snap['dataset'] and s['txg'] > snap['txg']
+        )
+        if newer:
+            raise TrueNASApiError(
+                'Cannot rollback: more recent snapshots exist: '
+                + ', '.join(newer)
+            )
 
     # -- portal / pool -----------------------------------------------------
 

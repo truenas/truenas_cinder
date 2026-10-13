@@ -360,6 +360,12 @@ class TrueNASDriver(driver.ISCSIDriver):
         # automatically once its last clone is destroyed.
         self._client.delete_snapshot(snap_id, defer=has_clones)
 
+    def snapshot_revert_use_temp_snapshot(self) -> bool:
+        # Cinder would otherwise snapshot the volume before reverting it. ZFS
+        # cannot roll back past a newer snapshot, so that backup would make
+        # every revert fail.
+        return False
+
     def revert_to_snapshot(
         self,
         context: Any,
@@ -461,6 +467,21 @@ class TrueNASDriver(driver.ISCSIDriver):
             '_name_id': new_volume.name_id,
             'provider_location': new_volume.provider_location,
         }
+
+    def retype(
+        self,
+        context: Any,
+        volume: _VolumeObj,
+        new_type: Any,
+        diff: Any,
+        host: Any,
+    ) -> bool:
+        """Change a volume's type in place.
+
+        Cinder calls this only when the volume stays on this backend. The
+        driver reads no volume type settings, so nothing changes on TrueNAS.
+        """
+        return True
 
     # -- export / connection ----------------------------------------------
 

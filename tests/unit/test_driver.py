@@ -264,6 +264,32 @@ class SnapshotTest(_DriverTestCase):
         self.driver.revert_to_snapshot(None, vol, snap)
         self.assertIn('rollback_snapshot', self.client.call_names())
 
+    def test_revert_opts_out_of_cinders_temporary_snapshot(self) -> None:
+        # Unless the driver opts out, Cinder snapshots the volume right
+        # before reverting it. That snapshot is newer than the target, and
+        # ZFS will not roll back past it.
+        self.assertFalse(self.driver.snapshot_revert_use_temp_snapshot())
+        vol = self._prep_volume()
+        snap = fakes.FakeSnapshot('snap1', vol)
+        self.driver.create_snapshot(snap)
+        self.driver.create_snapshot(fakes.FakeSnapshot('revert-backup', vol))
+        with self.assertRaises(fakes.TrueNASApiError):
+            self.driver.revert_to_snapshot(None, vol, snap)
+
+
+class RetypeTest(_DriverTestCase):
+    def test_retype_succeeds_without_touching_truenas(self) -> None:
+        # e.g. to a multiattach type: every volume already supports it.
+        vol = fakes.FakeVolume('vol1')
+        self.driver.create_volume(vol)
+        self.client.calls.clear()
+        diff = {'extra_specs': {'multiattach': (None, '<is> True')}}
+        # Cinder's default returns (False, None), which is truthy.
+        self.assertIs(
+            self.driver.retype(None, vol, {'id': 'type2'}, diff, {}), True
+        )
+        self.assertEqual(self.client.calls, [])
+
 
 class CloneLifecycleTest(_DriverTestCase):
     """The correction #1 scenarios: clone + defer + promote, no leaks."""
@@ -512,6 +538,12 @@ class FakeDeleteSemanticsTest(unittest.TestCase):
         with self.assertRaises(fakes.TrueNASApiError):
             self.client.delete_dataset('tank/src')
         self.assertIn('tank/src', self.client.datasets)
+
+    def test_rollback_refuses_while_newer_snapshots_exist(self) -> None:
+        self.client.create_snapshot('tank/src', 'newer')
+        with self.assertRaises(fakes.TrueNASApiError):
+            self.client.rollback_snapshot('tank/src@s')
+        self.client.rollback_snapshot('tank/src@newer')
 
     def test_recursive_delete_on_25_10_refuses_clone_origin(self) -> None:
         with self.assertRaises(fakes.TrueNASApiError):
