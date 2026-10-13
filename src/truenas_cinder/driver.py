@@ -19,6 +19,7 @@ WebSocket JSON-RPC API and returns iSCSI connection info. All host-side
 attach/detach/multipath is handled by os-brick.
 """
 
+from collections.abc import Sequence
 from typing import Any, Protocol, cast
 
 from oslo_log import log as logging
@@ -35,6 +36,15 @@ DEFAULT_ISCSI_PORT = 3260
 _WILDCARD_IPS = frozenset({'0.0.0.0', '::'})
 # Safety bound on the promote loop when detaching dependent clones.
 _MAX_PROMOTE_ROUNDS = 64
+
+
+class _AttachmentObj(Protocol):
+    """The Cinder VolumeAttachment attributes the driver reads."""
+
+    @property
+    def attach_status(self) -> str: ...
+    @property
+    def attached_host(self) -> str | None: ...
 
 
 class _VolumeObj(Protocol):
@@ -56,6 +66,8 @@ class _VolumeObj(Protocol):
     def provider_location(self) -> str | None: ...
     @property
     def provider_auth(self) -> str | None: ...
+    @property
+    def volume_attachment(self) -> Sequence[_AttachmentObj]: ...
 
 
 class _SnapshotObj(Protocol):
@@ -537,23 +549,42 @@ class TrueNASDriver(driver.ISCSIDriver):
         volume: _VolumeObj,
         connector: dict[str, Any] | None,
         **kwargs: Any,
-    ) -> None:
+    ) -> bool:
+        """Revoke a host's access to the volume.
+
+        Returns True while other attachments remain. Cinder then skips
+        remove_export, which would delete the target they are still using.
+        """
         target_name = common.target_name(volume.name_id)
         group = self._client.find_initiator_by_comment(target_name)
-        if group is None:
-            return
-        group_id = int(group['id'])
         if connector is None:
             # Detaching everywhere: clear the allowed-initiator list.
-            self._client.update_initiator(group_id, [])
-            return
+            if group is not None:
+                self._client.update_initiator(int(group['id']), [])
+            return False
+        # Cinder still lists the attachment being removed.
+        attached = [
+            a
+            for a in volume.volume_attachment
+            if a.attach_status == 'attached'
+        ]
+        on_host = [
+            a for a in attached if a.attached_host == connector.get('host')
+        ]
         host_iqn = connector.get('initiator')
-        if not isinstance(host_iqn, str) or not host_iqn:
-            return
-        current = self._initiator_iqns(group)
-        if host_iqn in current:
-            current.remove(host_iqn)
-            self._client.update_initiator(group_id, current)
+        # Instances on one host share its initiator, so keep it while another
+        # of them still uses the volume.
+        if (
+            group is not None
+            and len(on_host) <= 1
+            and isinstance(host_iqn, str)
+            and host_iqn
+        ):
+            current = self._initiator_iqns(group)
+            if host_iqn in current:
+                current.remove(host_iqn)
+                self._client.update_initiator(int(group['id']), current)
+        return len(attached) > 1
 
     # -- iSCSI chain management -------------------------------------------
 

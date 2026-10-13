@@ -680,16 +680,56 @@ class ExportConnectionTest(_DriverTestCase):
         self.assertIn('auth_username', data)
         self.assertIn('auth_password', data)
 
-    def test_terminate_connection_removes_host(self) -> None:
-        vol = self._make_exported_volume('vol1')
-        self.driver.initialize_connection(vol, {'initiator': 'iqn.host:a'})
-        self.driver.initialize_connection(vol, {'initiator': 'iqn.host:b'})
-        self.driver.terminate_connection(vol, {'initiator': 'iqn.host:a'})
+    def _attach(self, vol: fakes.FakeVolume, host: str) -> dict[str, str]:
+        connector = {'initiator': f'iqn.{host}', 'host': host}
+        self.driver.initialize_connection(vol, connector)
+        vol.volume_attachment.append(fakes.FakeAttachment(host))
+        return connector
+
+    def _detach(
+        self, vol: fakes.FakeVolume, connector: dict[str, str]
+    ) -> None:
+        # As Cinder's attachment_delete: the attachment is still listed
+        # during terminate_connection, and remove_export follows unless the
+        # driver reports the connection as shared.
+        shared = self.driver.terminate_connection(vol, connector)
+        if not shared:
+            self.driver.remove_export(None, vol)
+        for attachment in vol.volume_attachment:
+            if attachment.attached_host == connector['host']:
+                vol.volume_attachment.remove(attachment)
+                break
+
+    def _allowed_initiators(self, name_id: str = 'vol1') -> list[str]:
         group = self.client.find_initiator_by_comment(
-            common.target_name('vol1')
+            common.target_name(name_id)
         )
         assert group is not None
-        self.assertEqual(group['initiators'], ['iqn.host:b'])
+        return sorted(group['initiators'])
+
+    def test_detach_from_one_host_keeps_target_for_the_other(self) -> None:
+        vol = self._make_exported_volume('vol1')
+        host_a = self._attach(vol, 'host-a')
+        self._attach(vol, 'host-b')
+        self._detach(vol, host_a)
+        self.assertEqual(self._allowed_initiators(), ['iqn.host-b'])
+        self.assertEqual(len(self.client.targets), 1)
+
+    def test_detach_one_of_two_instances_on_a_host_keeps_access(self) -> None:
+        # A multiattach volume used by two instances on one compute host:
+        # both share that host's initiator and iSCSI session.
+        vol = self._make_exported_volume('vol1')
+        first = self._attach(vol, 'host-a')
+        self._attach(vol, 'host-a')
+        self._detach(vol, first)
+        self.assertEqual(self._allowed_initiators(), ['iqn.host-a'])
+        self.assertEqual(len(self.client.targets), 1)
+
+    def test_detach_last_attachment_removes_target(self) -> None:
+        vol = self._make_exported_volume('vol1')
+        connector = self._attach(vol, 'host-a')
+        self.assertFalse(self.driver.terminate_connection(vol, connector))
+        self.assertEqual(self._allowed_initiators(), [])
 
     def test_terminate_connection_none_clears_all(self) -> None:
         vol = self._make_exported_volume('vol1')

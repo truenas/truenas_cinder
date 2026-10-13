@@ -67,6 +67,16 @@ class FakeConfig:
         return self._options.get(name)
 
 
+class FakeAttachment:
+    """Stand-in for a cinder VolumeAttachment object."""
+
+    def __init__(
+        self, attached_host: str | None, attach_status: str = 'attached'
+    ) -> None:
+        self.attached_host: str | None = attached_host
+        self.attach_status: str = attach_status
+
+
 class FakeVolume:
     """Stand-in for a cinder Volume object."""
 
@@ -77,12 +87,14 @@ class FakeVolume:
         size: int = 1,
         provider_location: str | None = None,
         provider_auth: str | None = None,
+        volume_attachment: list[FakeAttachment] | None = None,
     ) -> None:
         self.id: str = id
         self.name_id: str = name_id or id
         self.size: int = size
         self.provider_location: str | None = provider_location
         self.provider_auth: str | None = provider_auth
+        self.volume_attachment: list[FakeAttachment] = volume_attachment or []
 
 
 class FakeSnapshot:
