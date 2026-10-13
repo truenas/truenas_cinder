@@ -31,6 +31,7 @@ Every call is recorded in ``calls`` so tests can assert exact sequences.
 from typing import Any
 
 from truenas_cinder import common, opts
+from truenas_cinder.client import PoolSpace
 from truenas_cinder.exception import TrueNASApiError
 
 JsonDict = dict[str, Any]
@@ -123,6 +124,12 @@ class FakeTrueNASClient:
             'size': 1000 * common.GIGABYTE,
             'allocated': 100 * common.GIGABYTE,
             'free': 900 * common.GIGABYTE,
+        }
+        # The pool's root dataset. Less than `size`, as on real pools: the
+        # raw size includes space ZFS holds back (and RAIDZ parity).
+        self.root_dataset: JsonDict = {
+            'used': 100 * common.GIGABYTE,
+            'available': 850 * common.GIGABYTE,
         }
         self.portal: JsonDict = {
             'id': 1,
@@ -456,9 +463,20 @@ class FakeTrueNASClient:
             (entry['ip'], entry.get('port')) for entry in self.portal['listen']
         ]
 
-    def available_bytes(self, pool: str) -> int:
-        self._record('available_bytes', pool=pool)
-        return int(self.pool['free'])
+    def pool_space(self, pool: str) -> PoolSpace:
+        self._record('pool_space', pool=pool)
+        return PoolSpace(
+            used=int(self.root_dataset['used']),
+            available=int(self.root_dataset['available']),
+        )
+
+    def provisioned_bytes(self, pool: str) -> int:
+        self._record('provisioned_bytes', pool=pool)
+        return sum(
+            int(ds['volsize'])
+            for path, ds in self.datasets.items()
+            if path.startswith(f'{pool}/')
+        )
 
     # -- iSCSI extent ------------------------------------------------------
 

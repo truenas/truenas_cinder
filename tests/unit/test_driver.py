@@ -699,6 +699,44 @@ class StatsAndSetupTest(_DriverTestCase):
         self.assertTrue(pool['multiattach'])
         self.assertFalse(pool['QoS_support'])
 
+    def test_capacity_is_usable_space_not_raw_pool_size(self) -> None:
+        # pool.query's size (1000 GiB in the fake) is the raw vdev size; the
+        # root dataset's used + available is what volumes can actually use.
+        pool = self.driver.get_volume_stats(refresh=True)['pools'][0]
+        self.assertEqual(pool['total_capacity_gb'], 950)
+        self.assertEqual(pool['free_capacity_gb'], 850)
+
+    def test_provisioned_capacity_is_sum_of_volume_sizes(self) -> None:
+        # Thin volumes use almost no pool space, but the scheduler's
+        # over-subscription check needs the sizes promised to them.
+        self.client.pool['allocated'] = 1 * common.GIGABYTE
+        self.driver.create_volume(fakes.FakeVolume('vol1', size=10))
+        self.driver.create_volume(fakes.FakeVolume('vol2', size=5))
+        pool = self.driver.get_volume_stats(refresh=True)['pools'][0]
+        self.assertEqual(pool['provisioned_capacity_gb'], 15)
+
+    def test_provisioned_capacity_counts_clones_at_full_size(self) -> None:
+        self.driver.create_volume(fakes.FakeVolume('src', size=4))
+        self.driver.create_cloned_volume(
+            fakes.FakeVolume('clone', size=6), fakes.FakeVolume('src', size=4)
+        )
+        pool = self.driver.get_volume_stats(refresh=True)['pools'][0]
+        self.assertEqual(pool['provisioned_capacity_gb'], 10)
+
+    def test_provisioned_capacity_includes_zvols_cinder_did_not_create(
+        self,
+    ) -> None:
+        # Cinder defines provisioned capacity as everything provisioned on
+        # the backend, not only the volumes it manages.
+        self.client.datasets['tank/vms/disk0'] = {
+            'volsize': 8 * common.GIGABYTE,
+            'refreservation': 0,
+            'origin': None,
+        }
+        self.driver.create_volume(fakes.FakeVolume('vol1', size=2))
+        pool = self.driver.get_volume_stats(refresh=True)['pools'][0]
+        self.assertEqual(pool['provisioned_capacity_gb'], 10)
+
     def test_check_for_setup_error_ok(self) -> None:
         self.driver.check_for_setup_error()
 

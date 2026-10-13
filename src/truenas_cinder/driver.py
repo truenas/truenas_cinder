@@ -723,10 +723,10 @@ class TrueNASDriver(driver.ISCSIDriver):
         return self._stats
 
     def _update_volume_stats(self) -> None:
-        free_bytes = self._client.available_bytes(self._pool)
-        pool_info = self._client.get_pool(self._pool) or {}
-        total_bytes = self._parsed_int(pool_info, 'size')
-        allocated_bytes = self._parsed_int(pool_info, 'allocated')
+        # Usable space, not the raw pool size: counting RAIDZ parity in the
+        # total would let Cinder over-subscribe past its configured ratio.
+        space = self._client.pool_space(self._pool)
+        provisioned_bytes = self._client.provisioned_bytes(self._pool)
 
         conf = self.configuration
         reserved = int(conf.safe_get('reserved_percentage') or 0)
@@ -734,9 +734,9 @@ class TrueNASDriver(driver.ISCSIDriver):
 
         pool_stats: dict[str, Any] = {
             'pool_name': self._pool,
-            'total_capacity_gb': common.bytes_to_gib(total_bytes),
-            'free_capacity_gb': common.bytes_to_gib(free_bytes),
-            'provisioned_capacity_gb': common.bytes_to_gib(allocated_bytes),
+            'total_capacity_gb': common.bytes_to_gib(space.total),
+            'free_capacity_gb': common.bytes_to_gib(space.available),
+            'provisioned_capacity_gb': common.bytes_to_gib(provisioned_bytes),
             'thin_provisioning_support': True,
             'thick_provisioning_support': True,
             'max_over_subscription_ratio': max_ratio,

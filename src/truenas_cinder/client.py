@@ -30,7 +30,7 @@ import ssl
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from typing import Any, Protocol, cast
+from typing import Any, NamedTuple, Protocol, cast
 
 from truenas_cinder import common
 from truenas_cinder.exception import (
@@ -81,6 +81,17 @@ DEPENDENCY_AVAILABLE: bool = _client_factory is not None
 
 #: Type alias for a decoded TrueNAS JSON object.
 JsonDict = dict[str, Any]
+
+
+class PoolSpace(NamedTuple):
+    """Usable space on a pool, in bytes, from its root dataset."""
+
+    used: int
+    available: int
+
+    @property
+    def total(self) -> int:
+        return self.used + self.available
 
 
 class _RawClient(Protocol):
@@ -818,30 +829,59 @@ class TrueNASClient:
         """``pool.query`` by name (total size, health)."""
         return self._query_one('pool.query', [['name', '=', pool]])
 
-    def available_bytes(self, pool: str) -> int:
-        """Free bytes on ``pool`` via ``zfs.resource.query``.
+    def pool_space(self, pool: str) -> PoolSpace:
+        """Used and available bytes of ``pool``'s root dataset.
 
-        Note the single-options-object param shape (not ``[filters, opts]``).
+        ``used + available`` is the usable capacity. ``pool.query``'s
+        ``size`` is the raw vdev size instead, which counts RAIDZ parity and
+        the space ZFS holds back. Uses ``zfs.resource.query``; note its
+        single-options-object param shape (not ``[filters, opts]``).
         """
         result = self._call(
             'zfs.resource.query',
             {
                 'paths': [pool],
-                'properties': ['available'],
+                'properties': ['used', 'available'],
                 'get_source': False,
             },
         )
         rows = cast('list[JsonDict]', result)
-        if not rows:
-            return 0
-        props = rows[0].get('properties')
-        if isinstance(props, dict):
-            available = cast('JsonDict', props).get('available')
-            if isinstance(available, dict):
-                return self._parse_size(
-                    cast('JsonDict', available).get('value')
-                )
+        props = rows[0].get('properties') if rows else None
+        if not isinstance(props, dict):
+            return PoolSpace(used=0, available=0)
+        props_dict = cast('JsonDict', props)
+        return PoolSpace(
+            used=self._property_bytes(props_dict, 'used'),
+            available=self._property_bytes(props_dict, 'available'),
+        )
+
+    @classmethod
+    def _property_bytes(cls, props: JsonDict, name: str) -> int:
+        prop = props.get(name)
+        if isinstance(prop, dict):
+            return cls._parse_size(cast('JsonDict', prop).get('value'))
         return 0
+
+    def provisioned_bytes(self, pool: str) -> int:
+        """Sum of ``volsize`` over every zvol in ``pool``.
+
+        Includes zvols Cinder did not create: Cinder's provisioned capacity
+        is everything provisioned on the backend. Filesystem datasets carry
+        no ``volsize`` and are skipped.
+        """
+        rows = self._query(
+            'pool.dataset.query',
+            [['pool', '=', pool]],
+            {'extra': {'flat': True, 'properties': ['volsize']}},
+        )
+        total = 0
+        for row in rows:
+            volsize = row.get('volsize')
+            if isinstance(volsize, dict):
+                total += self._parse_size(
+                    cast('JsonDict', volsize).get('parsed')
+                )
+        return total
 
     @staticmethod
     def _parse_size(value: object) -> int:

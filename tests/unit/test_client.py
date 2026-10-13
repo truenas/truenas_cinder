@@ -566,21 +566,29 @@ class CallShapeTest(unittest.TestCase):
             raw.calls[0][1][0], {'target': 3, 'extent': 4, 'lunid': 0}
         )
 
-    def test_available_bytes_uses_options_object(self) -> None:
+    def test_pool_space_uses_options_object(self) -> None:
         # zfs.resource.query takes one options object, not [filters, opts].
         client, raw = _connected(
             [
                 {
+                    'name': 'tank',
                     'properties': {
+                        'used': {
+                            'value': 2319454208,
+                            'raw': '2319454208',
+                        },
                         'available': {
-                            'value': 106551668736,
-                            'raw': '106551668736',
-                        }
-                    }
+                            'value': 253633753088,
+                            'raw': '253633753088',
+                        },
+                    },
                 }
             ]
         )
-        self.assertEqual(client.available_bytes('tank'), 106551668736)
+        space = client.pool_space('tank')
+        self.assertEqual(space.used, 2319454208)
+        self.assertEqual(space.available, 253633753088)
+        self.assertEqual(space.total, 2319454208 + 253633753088)
         method, params = raw.calls[0]
         self.assertEqual(method, 'zfs.resource.query')
         self.assertEqual(len(params), 1)
@@ -588,20 +596,27 @@ class CallShapeTest(unittest.TestCase):
             params[0],
             {
                 'paths': ['tank'],
-                'properties': ['available'],
+                'properties': ['used', 'available'],
                 'get_source': False,
             },
         )
 
-    def test_available_bytes_empty_result(self) -> None:
+    def test_pool_space_empty_result(self) -> None:
         client, _ = _connected([])
-        self.assertEqual(client.available_bytes('tank'), 0)
+        self.assertEqual(client.pool_space('tank'), (0, 0))
 
-    def test_available_bytes_string_value(self) -> None:
+    def test_pool_space_string_values(self) -> None:
         client, _ = _connected(
-            [{'properties': {'available': {'value': '42'}}}]
+            [
+                {
+                    'properties': {
+                        'used': {'value': '8'},
+                        'available': {'value': '42'},
+                    }
+                }
+            ]
         )
-        self.assertEqual(client.available_bytes('tank'), 42)
+        self.assertEqual(client.pool_space('tank'), (8, 42))
 
 
 class IscsiGlobalConfigTest(unittest.TestCase):
@@ -767,6 +782,47 @@ class PoolStatsTest(unittest.TestCase):
     def test_get_pool_missing(self) -> None:
         client, _ = _connected([])
         self.assertIsNone(client.get_pool('nope'))
+
+    def test_provisioned_bytes_sums_zvol_volsize(self) -> None:
+        # Shape as pool.dataset.query returns it with these options: only
+        # zvols carry volsize, as a property dict.
+        gib = 1073741824
+        client, raw = _connected(
+            [
+                {'id': 'tank', 'type': 'FILESYSTEM'},
+                {'id': 'tank/cinder', 'type': 'FILESYSTEM'},
+                {
+                    'id': 'tank/cinder/volume-1',
+                    'type': 'VOLUME',
+                    'volsize': {
+                        'parsed': gib,
+                        'rawvalue': str(gib),
+                        'value': '1 GiB',
+                        'source': 'LOCAL',
+                    },
+                },
+                {
+                    'id': 'tank/vms/disk0',
+                    'type': 'VOLUME',
+                    'volsize': {'parsed': 3 * gib, 'rawvalue': str(3 * gib)},
+                },
+            ]
+        )
+        self.assertEqual(client.provisioned_bytes('tank'), 4 * gib)
+        self.assertEqual(
+            raw.calls[0],
+            (
+                'pool.dataset.query',
+                (
+                    [['pool', '=', 'tank']],
+                    {'extra': {'flat': True, 'properties': ['volsize']}},
+                ),
+            ),
+        )
+
+    def test_provisioned_bytes_empty_pool(self) -> None:
+        client, _ = _connected([])
+        self.assertEqual(client.provisioned_bytes('tank'), 0)
 
 
 if __name__ == '__main__':

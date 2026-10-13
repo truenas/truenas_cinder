@@ -134,14 +134,15 @@ def probe(
             f'allocated={type(pool.get("allocated")).__name__}',
         )
 
-    free = client.available_bytes(args.pool)
-    if free > 0:
+    space = client.pool_space(args.pool)
+    if space.available > 0:
         rep.ok(
-            'zfs.resource.query available',
-            f'{common.bytes_to_gib(free):.1f} GiB free',
+            'zfs.resource.query used/available',
+            f'{common.bytes_to_gib(space.available):.1f} GiB free of '
+            f'{common.bytes_to_gib(space.total):.1f} GiB usable',
         )
     else:
-        rep.fail('zfs.resource.query available', 'parsed 0 bytes free')
+        rep.fail('zfs.resource.query used/available', 'parsed 0 bytes free')
 
     rep.section('iSCSI global configuration')
     global_config = client.iscsi_global_config()
