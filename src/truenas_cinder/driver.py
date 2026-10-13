@@ -286,28 +286,40 @@ class TrueNASDriver(driver.ISCSIDriver):
             return
         # Tear down any lingering iSCSI export first (best effort).
         self._teardown_iscsi_chain(volume)
-        # Detach dependent clones so ZFS will let the source be destroyed.
+        # Clones made from this volume are other volumes: detach them, or
+        # refuse to delete.
         self._promote_dependent_clones(dataset)
-        self._client.delete_dataset(dataset, recursive=True, force=True)
+        # Never delete recursively. On TrueNAS 27 a recursive delete is
+        # `zfs destroy -R`, which also destroys clones. Remove this volume's
+        # own snapshots one at a time instead; ZFS refuses any that still
+        # has a clone, and then refuses the non-recursive delete, so no path
+        # here can destroy another volume.
+        for snapshot_id in self._client.list_snapshots(dataset):
+            self._client.delete_snapshot(snapshot_id, defer=False)
+        self._client.delete_dataset(dataset, recursive=False, force=True)
 
     def _promote_dependent_clones(self, dataset: str) -> None:
         """Re-parent every clone rooted on this dataset's snapshots.
 
         Iterates because promoting one clone can move snapshots between
         datasets; each round frees at least the promoted clone's origin, so
-        the set converges (bounded by ``_MAX_PROMOTE_ROUNDS``).
+        the set converges (bounded by ``_MAX_PROMOTE_ROUNDS``). Raises
+        VolumeIsBusy if clones still depend on the dataset afterwards, which
+        makes Cinder keep the volume rather than delete it.
         """
         for _ in range(_MAX_PROMOTE_ROUNDS):
             clones = self._client.dependent_clones(dataset)
             if not clones:
                 return
             self._client.promote_dataset(clones[0])
-        LOG.warning(
-            'Dependent clones of %s did not fully detach after %d promote '
-            'rounds.',
-            dataset,
-            _MAX_PROMOTE_ROUNDS,
-        )
+        remaining = self._client.dependent_clones(dataset)
+        if remaining:
+            raise exception.VolumeIsBusy(
+                message=f'Cannot delete {dataset}: volumes cloned from it '
+                f'({", ".join(sorted(remaining))}) still depend on it after '
+                f'{_MAX_PROMOTE_ROUNDS} promote attempts, and deleting it '
+                'would destroy them.'
+            )
 
     def extend_volume(self, volume: _VolumeObj, new_size: int) -> None:
         dataset = self._dataset_for(volume)

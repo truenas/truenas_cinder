@@ -283,21 +283,25 @@ def lifecycle(
         else:
             rep.info('snapshot delete defer=true', 'removed immediately')
 
-        # 3. destroying the source while a clone depends on it must fail.
+        # 3. The driver's safety net: a NON-recursive delete of the source
+        #    must be refused while a clone depends on it. (A recursive one
+        #    is never issued: on TrueNAS 27 it destroys the clone too.)
         #    Note: TrueNAS tears down the zvol's iSCSI attachments (extent,
-        #    target, targetextent) as part of this call even when the ZFS
-        #    destroy then fails, so those ids may already be gone below.
+        #    target, targetextent) as part of a delete call even when the
+        #    ZFS destroy then fails, so those ids may already be gone below.
         try:
-            client.delete_dataset(src, recursive=True, force=True)
+            client.delete_dataset(src, recursive=False, force=True)
             rep.fail(
-                'source delete with dependent clone',
-                'succeeded, but ZFS was expected to refuse it',
+                'non-recursive delete of a clone source',
+                'succeeded, but must be refused while a clone depends on it',
             )
         except Exception as exc:
             rep.ok(
-                'source delete with dependent clone refused',
+                'non-recursive delete of a clone source refused',
                 type(exc).__name__,
             )
+        if client.get_dataset(clone) is None:
+            rep.fail('clone after refused delete', 'the clone is gone')
 
         # 4. promote re-parents the clone so the source can be destroyed.
         deps = client.dependent_clones(src)
@@ -317,11 +321,21 @@ def lifecycle(
         client.delete_initiator(created.pop('initiator'))
         rep.ok('iSCSI chain teardown', 'targetextent/target/extent/initiator')
 
-        client.delete_dataset(src, recursive=True, force=True)
+        # 5. Delete the source exactly as the driver does: its own snapshots
+        #    one at a time, then the dataset non-recursively.
+        leftovers = client.list_snapshots(src)
+        rep.info('snapshots left on the source', f'{leftovers}')
+        for snapshot_id in leftovers:
+            client.delete_snapshot(snapshot_id, defer=False)
+        client.delete_dataset(src, recursive=False, force=True)
         if client.get_dataset(src) is None:
-            rep.ok('source delete after promote', src)
+            rep.ok('source delete after promote (non-recursive)', src)
         else:
             rep.fail('source delete after promote', 'still present')
+        if client.get_dataset(clone) is not None:
+            rep.ok('clone survived its source being deleted', clone)
+        else:
+            rep.fail('clone survived its source being deleted', 'clone gone')
 
         # Does the promoted clone still carry the deferred snapshot?
         moved = common.snapshot_id(clone, snap_name)

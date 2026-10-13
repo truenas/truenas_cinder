@@ -134,6 +134,10 @@ class FakeTrueNASClient:
             'listen_port': TRUENAS_ISCSI_PORT,
         }
         self.advertised_versions: list[str] = ['v25.04.0', 'v25.10.0']
+        # How a recursive delete treats clones. False is TrueNAS 25.10
+        # (`zfs destroy -r`: refused while clones depend on the dataset).
+        # True is TrueNAS 27 (`zfs destroy -R`: the clones are destroyed too).
+        self.recursive_destroys_clones: bool = False
 
     # -- test helpers ------------------------------------------------------
 
@@ -240,7 +244,7 @@ class FakeTrueNASClient:
         self,
         path: str,
         *,
-        recursive: bool = True,
+        recursive: bool = False,
         force: bool = True,
     ) -> None:
         self._record(
@@ -248,20 +252,47 @@ class FakeTrueNASClient:
         )
         if path not in self.datasets:
             return
-        # ZFS: a recursive (-r) destroy will not remove a dataset whose
-        # snapshots are the origin of clones living elsewhere; only -R would
-        # (which we never issue, since it would destroy other volumes).
-        snaps_here = {
+        snaps_here = self._snapshots_of(path)
+        if not recursive:
+            # zfs destroy without -r refuses a dataset that has snapshots,
+            # so it can never reach a clone.
+            if snaps_here:
+                raise TrueNASApiError(
+                    f'cannot destroy {path}: it has snapshots'
+                )
+            self._remove_dataset(path)
+            return
+        dependents = self._clones_rooted_on(path)
+        if dependents and not self.recursive_destroys_clones:
+            # TrueNAS 25.10: a recursive delete is `zfs destroy -r`, which
+            # refuses a dataset whose snapshots are origins of clones.
+            raise TrueNASApiError(
+                f'cannot destroy {path}: snapshot has dependent clones'
+            )
+        # TrueNAS 27: a recursive delete is `zfs destroy -R`, which also
+        # destroys every clone -- and their clones -- with it.
+        for clone in dependents:
+            if clone in self.datasets:
+                self.delete_dataset(clone, recursive=True)
+        self._remove_dataset(path)
+
+    def _snapshots_of(self, path: str) -> set[str]:
+        return {
             sid for sid, s in self.snapshots.items() if s['dataset'] == path
         }
-        for other, ds in self.datasets.items():
-            if other != path and ds['origin'] in snaps_here:
-                raise TrueNASApiError(
-                    f'cannot destroy {path}: snapshot has dependent clones'
-                )
+
+    def _clones_rooted_on(self, path: str) -> list[str]:
+        snaps_here = self._snapshots_of(path)
+        return [
+            other
+            for other, ds in self.datasets.items()
+            if other != path and ds['origin'] in snaps_here
+        ]
+
+    def _remove_dataset(self, path: str) -> None:
         origin = self.datasets[path]['origin']
         del self.datasets[path]
-        for sid in snaps_here:
+        for sid in self._snapshots_of(path):
             del self.snapshots[sid]
         # Deleting a clone may release a deferred origin snapshot that was
         # kept alive only by this clone.
@@ -380,6 +411,10 @@ class FakeTrueNASClient:
             'refreservation': 0,
             'origin': snapshot_id,
         }
+
+    def list_snapshots(self, dataset: str) -> list[str]:
+        self._record('list_snapshots', dataset=dataset)
+        return sorted(self._snapshots_of(dataset))
 
     def get_snapshot(self, snapshot_id: str) -> JsonDict | None:
         self._record('get_snapshot', snapshot_id=snapshot_id)

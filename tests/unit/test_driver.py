@@ -120,6 +120,41 @@ class VolumeOpsTest(_DriverTestCase):
         # No exception even though the dataset never existed.
         self.driver.delete_volume(vol)
 
+    def test_delete_is_never_recursive(self) -> None:
+        # On TrueNAS 27 a recursive delete also destroys clones -- other
+        # volumes -- so the driver must never request one.
+        vol = fakes.FakeVolume('vol1')
+        self.driver.create_volume(vol)
+        self.driver.delete_volume(vol)
+        deletes = [
+            kw for name, kw in self.client.calls if name == 'delete_dataset'
+        ]
+        self.assertEqual(len(deletes), 1)
+        self.assertFalse(deletes[0]['recursive'])
+
+    def test_delete_removes_own_snapshots_first(self) -> None:
+        # A non-recursive delete is refused while snapshots exist, so the
+        # volume's own snapshots go first, one at a time.
+        vol = fakes.FakeVolume('vol1')
+        self.driver.create_volume(vol)
+        dataset = self._dataset('vol1')
+        self.client.create_snapshot(dataset, 'leftover')
+        self.driver.delete_volume(vol)
+
+        names = self.client.call_names()
+        self.assertLess(
+            names.index('delete_snapshot'), names.index('delete_dataset')
+        )
+        snapshot_delete = next(
+            kw for name, kw in self.client.calls if name == 'delete_snapshot'
+        )
+        self.assertEqual(
+            snapshot_delete['snapshot_id'],
+            common.snapshot_id(dataset, 'leftover'),
+        )
+        self.assertFalse(snapshot_delete['defer'])
+        self.assertNotIn(dataset, self.client.datasets)
+
     def test_extend_volume_thin(self) -> None:
         vol = fakes.FakeVolume('vol1', size=1)
         self.driver.create_volume(vol)
@@ -423,6 +458,72 @@ class CloneLifecycleTest(_DriverTestCase):
         self.assertNotIn(self._dataset('src'), self.client.datasets)
         self.assertIn(self._dataset('c1'), self.client.datasets)
         self.assertIn(self._dataset('c2'), self.client.datasets)
+
+    def test_delete_refuses_when_clones_cannot_be_detached(self) -> None:
+        # If promotion cannot detach a clone, deleting the source must stop
+        # with VolumeIsBusy (Cinder then keeps the volume) -- never delete
+        # anyway. On TrueNAS 27 deleting anyway destroyed the clone.
+        src = self._prep_volume('src', size=1)
+        dst = fakes.FakeVolume('dst', size=1)
+        self.driver.create_cloned_volume(dst, src)
+        self.client.promote_dataset = mock.Mock()  # type: ignore[method-assign]
+
+        with self.assertRaises(exception.VolumeIsBusy) as ctx:
+            self.driver.delete_volume(src)
+        self.assertIn(self._dataset('dst'), str(ctx.exception))
+        # Both volumes are untouched and nothing was deleted.
+        self.assertIn(self._dataset('src'), self.client.datasets)
+        self.assertIn(self._dataset('dst'), self.client.datasets)
+        self.assertNotIn('delete_dataset', self.client.call_names())
+
+
+class CloneLifecycleOnTrueNAS27Test(CloneLifecycleTest):
+    """The clone lifecycle again, with TrueNAS 27's delete semantics.
+
+    On TrueNAS 27 a recursive delete is ``zfs destroy -R`` and takes clones
+    with it, so a driver that deleted recursively would pass on 25.10 and
+    destroy volumes on 27.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.client.recursive_destroys_clones = True
+
+
+class FakeDeleteSemanticsTest(unittest.TestCase):
+    """The fake's delete must model ZFS, or the lifecycle tests prove
+    nothing."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.client = fakes.FakeTrueNASClient()
+        common_args: dict[str, Any] = {
+            'volblocksize': '16K',
+            'compression': 'LZ4',
+            'sparse': True,
+        }
+        self.client.create_zvol('tank/src', common.GIGABYTE, **common_args)
+        self.client.create_snapshot('tank/src', 's')
+        self.client.clone_snapshot('tank/src@s', 'tank/clone')
+        self.client.create_snapshot('tank/clone', 't')
+        self.client.clone_snapshot('tank/clone@t', 'tank/grandclone')
+
+    def test_non_recursive_delete_refuses_with_snapshots(self) -> None:
+        with self.assertRaises(fakes.TrueNASApiError):
+            self.client.delete_dataset('tank/src')
+        self.assertIn('tank/src', self.client.datasets)
+
+    def test_recursive_delete_on_25_10_refuses_clone_origin(self) -> None:
+        with self.assertRaises(fakes.TrueNASApiError):
+            self.client.delete_dataset('tank/src', recursive=True)
+        self.assertIn('tank/clone', self.client.datasets)
+
+    def test_recursive_delete_on_27_destroys_clones(self) -> None:
+        self.client.recursive_destroys_clones = True
+        self.client.delete_dataset('tank/src', recursive=True)
+        # The clone and its own clone went with it.
+        self.assertEqual(self.client.datasets, {})
+        self.assertEqual(self.client.snapshots, {})
 
 
 class ExportConnectionTest(_DriverTestCase):

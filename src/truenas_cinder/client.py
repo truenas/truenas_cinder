@@ -390,10 +390,17 @@ class TrueNASClient:
         self,
         path: str,
         *,
-        recursive: bool = True,
+        recursive: bool = False,
         force: bool = True,
     ) -> None:
-        """``pool.dataset.delete``. ENOENT is treated as success."""
+        """``pool.dataset.delete``. ENOENT is treated as success.
+
+        Non-recursive by default, and the driver never asks for recursive:
+        on TrueNAS 27 a recursive delete is ``zfs destroy -R``, which also
+        destroys every clone of the dataset -- other Cinder volumes. A
+        non-recursive delete is refused while the dataset has snapshots, so
+        it can never take a clone with it.
+        """
         try:
             self._call(
                 'pool.dataset.delete',
@@ -501,6 +508,11 @@ class TrueNASClient:
             'pool.snapshot.clone',
             {'snapshot': snapshot_id, 'dataset_dst': dataset_dst},
         )
+
+    def list_snapshots(self, dataset: str) -> list[str]:
+        """Ids of the snapshots taken of ``dataset`` itself."""
+        rows = self._query('pool.snapshot.query', [['dataset', '=', dataset]])
+        return [row['id'] for row in rows if isinstance(row.get('id'), str)]
 
     def get_snapshot(self, snapshot_id: str) -> JsonDict | None:
         """Look up a snapshot by full id; ``None`` if absent."""
