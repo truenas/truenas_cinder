@@ -5,13 +5,13 @@ backend, then exercise it by hand and with Tempest.
 
 | File | What it is |
 | ---- | ---------- |
-| `prepare-vm.sh` | Prepares a fresh Ubuntu 24.04 VM and writes `local.conf` |
+| `prepare-vm.sh` | Prepares a fresh Ubuntu 24.04 or 26.04 VM and writes `local.conf` |
 | `local.conf.example` | The DevStack configuration `prepare-vm.sh` fills in |
 | `plugin.sh`, `settings` | A DevStack plugin: copies the driver into DevStack's cinder tree and installs the TrueNAS API client before `cinder-volume` starts |
 
 ## What you need
 
-- **A dedicated Ubuntu 24.04 VM.** DevStack makes substantial changes to the
+- **A dedicated Ubuntu 24.04 or 26.04 VM.** DevStack makes substantial changes to the
   machine it runs on, so don't use a workstation or a shared host. Give it
   16 GiB of RAM (8 GiB is the floor), 4 or more vCPUs, about 80 GiB of disk,
   and nested virtualization so instances can run under KVM. Without nested

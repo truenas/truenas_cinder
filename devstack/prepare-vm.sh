@@ -14,7 +14,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 #
-# Prepare a dedicated Ubuntu 24.04 VM to run DevStack with the TrueNAS Cinder
+# Prepare a dedicated Ubuntu 24.04 or 26.04 VM to run DevStack with the TrueNAS Cinder
 # driver as its only volume backend. Run with --help for usage.
 
 set -euo pipefail
@@ -38,7 +38,7 @@ CLEANUP_DIRS=()
 
 usage() {
     cat <<'EOF'
-Prepare a dedicated Ubuntu 24.04 VM to run DevStack with the TrueNAS Cinder
+Prepare a dedicated Ubuntu 24.04 or 26.04 VM to run DevStack with the TrueNAS Cinder
 driver as its only volume backend.
 
 Run it from a checkout of this repository on the VM:
@@ -201,8 +201,9 @@ preflight_host() {
         # shellcheck source=/dev/null
         os_version=$(. /etc/os-release && echo "${VERSION_ID:-}")
     fi
-    if [[ "$os_id" != ubuntu || "$os_version" != 24.04 ]]; then
-        warn "DevStack is most tested on Ubuntu 24.04; this is ${os_id:-unknown} ${os_version}"
+    # The Ubuntu releases in DevStack's SUPPORTED_DISTROS (noble, resolute).
+    if [[ "$os_id" != ubuntu || ! "$os_version" =~ ^(24\.04|26\.04)$ ]]; then
+        warn "DevStack supports Ubuntu 24.04 and 26.04; this is ${os_id:-unknown} ${os_version}"
     fi
     if grep -qi microsoft /proc/version 2>/dev/null; then
         warn "This looks like WSL. DevStack takes over the machine it runs on; use a distro or VM dedicated to it."
