@@ -60,7 +60,9 @@ enable_plugin truenas-cinder @TRUENAS_CINDER_REPO@ @TRUENAS_CINDER_BRANCH@
 CINDER_ENABLED_BACKENDS=truenas:truenas
 
 # --- Tempest -----------------------------------------------------------------
-enable_plugin cinder-tempest-plugin https://opendev.org/openstack/cinder-tempest-plugin
+# The Cinder Tempest plugin has no DevStack hooks, so enable_plugin would only
+# clone it. DevStack installs Tempest plugins from TEMPEST_PLUGINS.
+TEMPEST_PLUGINS=git+https://opendev.org/openstack/cinder-tempest-plugin
 ENABLE_VOLUME_MULTIATTACH=True
 # Tempest checks these against the driver's reported volume stats.
 TEMPEST_VOLUME_VENDOR=TrueNAS
