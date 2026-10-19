@@ -309,6 +309,90 @@ class FailureTest(unittest.TestCase):
         conn.close()
 
 
+class HeartbeatTest(unittest.TestCase):
+    """TrueNAS closes idle connections, so the connection pings."""
+
+    def _connection(
+        self, transport: _FakeTransport, ping_timeout: float = 5.0
+    ) -> jsonrpc.Connection:
+        conn = jsonrpc.Connection(
+            transport,
+            call_timeout=5.0,
+            ping_interval=0.02,
+            ping_timeout=ping_timeout,
+        )
+        self.addCleanup(conn.close)
+        return conn
+
+    @staticmethod
+    def _pings(transport: _FakeTransport) -> list[JsonDict]:
+        return [r for r in transport.sent if r['method'] == 'core.ping']
+
+    def test_an_idle_connection_pings(self) -> None:
+        transport = _FakeTransport(_answering('pong'))
+        conn = self._connection(transport)
+        _wait_for(lambda: len(self._pings(transport)) >= 3)
+        self.assertFalse(conn.closed)
+        self.assertEqual(self._pings(transport)[0]['params'], [])
+
+    def test_an_unanswered_ping_gives_the_connection_up(self) -> None:
+        transport = _FakeTransport()  # never answers
+        conn = self._connection(transport, ping_timeout=0.02)
+        _wait_for(lambda: conn.closed)
+        self.assertTrue(transport.closed)
+        with self.assertRaisesRegex(
+            TrueNASConnectionError, 'did not answer a ping'
+        ):
+            conn.call('pool.query')
+
+    def test_an_unanswered_ping_spares_calls_in_flight(self) -> None:
+        create: list[JsonDict] = []
+
+        def handler(request: JsonDict) -> list[object]:
+            # Pings go unanswered; the create waits for the test.
+            if request['method'] == 'pool.dataset.create':
+                create.append(request)
+            return []
+
+        transport = _FakeTransport(handler)
+        conn = self._connection(transport, ping_timeout=0.02)
+        thread, outcome = _in_thread(
+            lambda: conn.call('pool.dataset.create', {'name': 'tank/x'})
+        )
+        _wait_for(lambda: bool(create))
+        _wait_for(lambda: len(self._pings(transport)) >= 3)
+        self.assertFalse(conn.closed)
+        transport.deliver(_result(create[0], {'id': 'tank/x'}))
+        thread.join(5)
+        self.assertEqual(outcome, [{'id': 'tank/x'}])
+        # Idle again, the next unanswered ping gives the connection up.
+        _wait_for(lambda: conn.closed)
+
+    def test_an_error_reply_keeps_the_connection(self) -> None:
+        transport = _FakeTransport(
+            lambda r: [_error(r, {'code': -32001, 'message': 'denied'})]
+        )
+        conn = self._connection(transport)
+        _wait_for(lambda: len(self._pings(transport)) >= 2)
+        self.assertFalse(conn.closed)
+
+    def test_pinging_stops_when_the_connection_closes(self) -> None:
+        transport = _FakeTransport(_answering('pong'))
+        conn = self._connection(transport)
+        _wait_for(lambda: bool(self._pings(transport)))
+        conn.close()
+        sent = len(transport.sent)
+        threading.Event().wait(0.1)
+        self.assertEqual(len(transport.sent), sent)
+
+    def test_ping_interval_zero_turns_it_off(self) -> None:
+        transport = _FakeTransport(_answering('pong'))
+        conn = jsonrpc.Connection(transport, ping_interval=0)
+        self.addCleanup(conn.close)
+        threading.Event().wait(0.1)
+        self.assertEqual(transport.sent, [])
+
+
 class ApiErrorTest(unittest.TestCase):
     """Decoding TrueNAS's JSON-RPC error objects."""
 

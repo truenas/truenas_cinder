@@ -19,6 +19,10 @@ call by id, so calls from several threads can be in flight at once. Messages
 without an id are server notifications, which are ignored: the driver
 subscribes to nothing.
 
+TrueNAS closes an API connection that carries no traffic for about a
+minute, so a heartbeat thread calls ``core.ping`` every ``PING_INTERVAL``
+seconds; a ping left unanswered gives the connection up.
+
 This module neither logs in nor reconnects. A lost connection fails the
 calls in flight and refuses new ones; ``client.TrueNASClient`` decides when
 to open a new one.
@@ -84,6 +88,11 @@ _TRUENAS_ERRNAMES = {
 CONNECT_TIMEOUT = 10.0
 #: How long to wait for the reply to a call.
 CALL_TIMEOUT = 60.0
+#: How often the heartbeat calls ``core.ping``; well inside the minute after
+#: which TrueNAS closes an idle connection.
+PING_INTERVAL = 30.0
+#: How long the heartbeat waits for a ping's reply before giving up.
+PING_TIMEOUT = 10.0
 
 
 class Transport(Protocol):
@@ -279,18 +288,35 @@ class Connection:
     """An open JSON-RPC connection to TrueNAS."""
 
     def __init__(
-        self, transport: Transport, *, call_timeout: float = CALL_TIMEOUT
+        self,
+        transport: Transport,
+        *,
+        call_timeout: float = CALL_TIMEOUT,
+        ping_interval: float = PING_INTERVAL,
+        ping_timeout: float = PING_TIMEOUT,
     ) -> None:
+        """``ping_interval`` 0 turns the heartbeat off."""
         self._transport = transport
         self._call_timeout = call_timeout
+        self._ping_interval = ping_interval
+        self._ping_timeout = ping_timeout
         self._ids = itertools.count(1)
         self._lock = threading.Lock()
         self._pending: dict[int, _Pending] = {}
         self._closed_reason: str | None = None
+        self._stopping = threading.Event()
         self._reader = threading.Thread(
             target=self._read_loop, name='truenas-jsonrpc', daemon=True
         )
         self._reader.start()
+        self._heartbeat: threading.Thread | None = None
+        if ping_interval > 0:
+            self._heartbeat = threading.Thread(
+                target=self._ping_loop,
+                name='truenas-jsonrpc-ping',
+                daemon=True,
+            )
+            self._heartbeat.start()
 
     @classmethod
     def open(
@@ -300,10 +326,13 @@ class Connection:
         verify_ssl: bool = True,
         call_timeout: float = CALL_TIMEOUT,
         connect_timeout: float = CONNECT_TIMEOUT,
+        ping_interval: float = PING_INTERVAL,
         transport_factory: TransportFactory = open_websocket,
     ) -> Connection:
         transport = transport_factory(url, verify_ssl, connect_timeout)
-        return cls(transport, call_timeout=call_timeout)
+        return cls(
+            transport, call_timeout=call_timeout, ping_interval=ping_interval
+        )
 
     @property
     def closed(self) -> bool:
@@ -320,6 +349,11 @@ class Connection:
         reply, ``TrueNASTimeout`` when no reply arrives in time, and
         ``TrueNASConnectionError`` when the connection is or becomes closed.
         """
+        return self._call(method, params, self._call_timeout)
+
+    def _call(
+        self, method: str, params: tuple[object, ...], timeout: float
+    ) -> object:
         pending = _Pending()
         with self._lock:
             if self._closed_reason is not None:
@@ -344,12 +378,11 @@ class Connection:
             raise TrueNASConnectionError(
                 f'{method} failed: could not send it to TrueNAS: {exc}'
             ) from exc
-        if not pending.event.wait(self._call_timeout):
+        if not pending.event.wait(timeout):
             with self._lock:
                 self._pending.pop(call_id, None)
             raise TrueNASTimeout(
-                f'{method} failed: TrueNAS did not answer within '
-                f'{self._call_timeout:g}s.'
+                f'{method} failed: TrueNAS did not answer within {timeout:g}s.'
             )
         if pending.lost is not None:
             # The request was sent; TrueNAS may or may not have run it.
@@ -366,8 +399,32 @@ class Connection:
     def close(self) -> None:
         """Close the connection (idempotent)."""
         self._shut_down('closed by the driver')
-        if self._reader is not threading.current_thread():
-            self._reader.join(timeout=1.0)
+        for thread in (self._reader, self._heartbeat):
+            if thread is not None and thread is not threading.current_thread():
+                thread.join(timeout=1.0)
+
+    # -- heartbeat ---------------------------------------------------------
+
+    def _ping_loop(self) -> None:
+        while not self._stopping.wait(self._ping_interval):
+            try:
+                self._call('core.ping', (), self._ping_timeout)
+            except TrueNASTimeout:
+                # Calls in flight would fail with their outcome unknown;
+                # they time out on their own if TrueNAS has really stopped.
+                with self._lock:
+                    busy = bool(self._pending)
+                if not busy:
+                    self._shut_down(
+                        f'TrueNAS did not answer a ping within '
+                        f'{self._ping_timeout:g}s'
+                    )
+            except TrueNASApiError:
+                # An error reply still proves the connection is alive.
+                pass
+            except TrueNASConnectionError:
+                # Already shut down; the loop ends at the next wait.
+                pass
 
     # -- reader ------------------------------------------------------------
 
@@ -418,6 +475,7 @@ class Connection:
             self._closed_reason = reason
             waiting = list(self._pending.values())
             self._pending.clear()
+        self._stopping.set()
         for pending in waiting:
             pending.lost = reason
             pending.event.set()
