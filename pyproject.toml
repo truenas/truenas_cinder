@@ -3,7 +3,9 @@ name = "truenas-cinder"
 version = "0.1.0"
 description = "TrueNAS OpenStack Cinder volume driver"
 readme = "README.md"
-requires-python = ">=3.10"
+# 3.9 for Red Hat OpenStack Services on OpenShift 18, whose cinder-volume
+# image runs RHEL 9's Python 3.9.
+requires-python = ">=3.9"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "TrueNAS" }]
@@ -29,7 +31,7 @@ packages = ["src/truenas_cinder"]
 # ---------------------------------------------------------------------------
 [tool.ruff]
 line-length = 79
-target-version = "py310"
+target-version = "py39"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -66,7 +68,7 @@ include = ["src", "tests"]
 # Hand-written stubs for the untyped cinder symbols the driver imports
 # (cinder ships no py.typed). Not synced in-tree.
 stubPath = "stubs"
-pythonVersion = "3.10"
+pythonVersion = "3.9"
 # cinder/oslo are dev-only, partially typed third-party libs.
 reportMissingModuleSource = false
 # White-box unit tests legitimately assign driver internals (driver._pool etc.)
@@ -78,11 +80,14 @@ reportPrivateUsage = false
 testpaths = ["tests"]
 
 [dependency-groups]
+# The dev environment runs a current cinder, which needs Python 3.10 or
+# later. tools/run_tests.sh separately runs the tests that do not need cinder
+# under Python 3.9.
 dev = [
     "basedpyright>=1.39.9",
-    "cinder>=28.0.0",
-    "os-brick>=7.0.0",
-    "oslo-config>=10.4.0",
-    "pytest>=9.1.1",
+    "cinder>=28.0.0; python_version >= '3.10'",
+    "os-brick>=7.0.0; python_version >= '3.10'",
+    "oslo-config>=10.4.0; python_version >= '3.10'",
+    "pytest>=9.1.1; python_version >= '3.10'",
     "ruff>=0.15.21",
 ]

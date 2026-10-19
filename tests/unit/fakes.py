@@ -32,6 +32,8 @@ from RFC 5802 independently of ``truenas_cinder.scram`` so the client is
 tested against something other than itself.
 """
 
+from __future__ import annotations
+
 import base64
 import hashlib
 import hmac

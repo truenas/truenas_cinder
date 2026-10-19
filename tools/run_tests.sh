@@ -20,6 +20,10 @@
 #   no-websocket  without websocket-client, which is how cinder's own test
 #                 run may see the driver: the import is guarded, so the
 #                 driver must still load and its tests must still pass
+#   python3.9     the Python of Red Hat OpenStack Services on OpenShift 18's
+#                 cinder-volume image. Current cinder needs 3.10, so this
+#                 compiles every module and runs the tests that do not need
+#                 cinder: the TrueNAS client, its login and SCRAM
 #
 # Arguments are passed to pytest:
 #
@@ -54,8 +58,19 @@ without_websocket() {
         uv run --no-sync pytest "$@"
 }
 
+on_python39() {
+    local run=(uv run --isolated --no-project --python 3.9
+        --with 'websocket-client>=1.3.2' --with oslo.config --with oslo.log
+        --with pytest)
+    "${run[@]}" python -m compileall -q src/truenas_cinder &&
+        PYTHONPATH=src:. "${run[@]}" pytest "$@" \
+            tests/unit/test_jsonrpc.py tests/unit/test_scram.py \
+            tests/unit/test_auth.py tests/unit/test_client.py
+}
+
 run_variant default uv run pytest "$@"
 run_variant no-websocket without_websocket "$@"
+run_variant python3.9 on_python39 "$@"
 
 printf '\n'
 if ((${#failed[@]})); then

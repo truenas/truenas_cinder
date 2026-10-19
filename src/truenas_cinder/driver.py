@@ -19,6 +19,8 @@ WebSocket JSON-RPC API and returns iSCSI connection info. All host-side
 attach/detach/multipath is handled by os-brick.
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from typing import Any, Protocol, cast
 
