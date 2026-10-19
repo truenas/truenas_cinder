@@ -36,6 +36,7 @@ Configuration comes from the environment (flags override):
     TRUENAS_API_KEY               API key  (required)
     TRUENAS_USER                  key owner (default: truenas_admin)
     TRUENAS_AUTH_MECHANISM        PLAIN (default) or SCRAM
+    TRUENAS_CHANNEL_BINDING       SCRAM binding: auto (default), on, off
     TRUENAS_POOL                  ZFS pool (default: tank)
     TRUENAS_ISCSI_PORTAL          portal id, or host:port to resolve by IP
     TRUENAS_INSECURE_SKIP_VERIFY  set true to skip TLS verification
@@ -59,6 +60,7 @@ from truenas_cinder import common  # noqa: E402
 from truenas_cinder.client import (  # noqa: E402
     AUTH_MECHANISMS,
     AUTH_PLAIN,
+    AUTH_SCRAM,
     REQUIRED_API_VERSION,
     TrueNASClient,
 )
@@ -408,6 +410,13 @@ def main(argv: list[str] | None = None) -> int:
         default=env.get('TRUENAS_AUTH_MECHANISM', AUTH_PLAIN),
     )
     parser.add_argument(
+        '--channel-binding',
+        choices=('auto', 'on', 'off'),
+        default=env.get('TRUENAS_CHANNEL_BINDING', 'auto'),
+        help='SCRAM channel binding: auto binds whenever the connection uses '
+        'TLS (the driver default), on requires it, off disables it.',
+    )
+    parser.add_argument(
         '--verify-ssl',
         action='store_true',
         help='Verify TLS (default: follows TRUENAS_INSECURE_SKIP_VERIFY).',
@@ -450,17 +459,11 @@ def main(argv: list[str] | None = None) -> int:
     client = TrueNASClient()
     if not client.dependency_available():
         rep.fail(
-            'truenas_api_client',
+            'websocket-client',
             f'could not be imported: {client.dependency_error()}',
         )
         return 1
-    if client.supports_auth_mechanisms():
-        rep.info('truenas_api_client', 'newer release: PLAIN and SCRAM')
-    else:
-        rep.info(
-            'truenas_api_client',
-            'TS-25.10 release: authenticates with the key alone',
-        )
+    binding = {'auto': None, 'on': True, 'off': False}[args.channel_binding]
     try:
         client.connect(
             url,
@@ -468,12 +471,17 @@ def main(argv: list[str] | None = None) -> int:
             api_key,
             verify_ssl=verify_ssl,
             auth_mechanism=args.auth_mechanism,
+            channel_binding=binding,
         )
     except Exception as exc:
         rep.fail('authenticate', str(exc)[:300])
         print('\nRESULT: FAILED (could not authenticate)')
         return 1
-    rep.ok('authenticate', f'{args.auth_mechanism} as {args.user!r}')
+    how = f'{args.auth_mechanism} as {args.user!r}'
+    if args.auth_mechanism == AUTH_SCRAM:
+        bound = binding is not False and url.startswith('wss://')
+        how += ', bound to the TLS certificate' if bound else ', unbound'
+    rep.ok('authenticate', how)
 
     try:
         client.ping()

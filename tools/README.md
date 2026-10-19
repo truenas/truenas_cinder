@@ -110,6 +110,11 @@ The dev repo's `stubs/` (hand-written cinder type stubs for basedpyright),
 intentionally left behind — the cinder tree provides the real packages and its
 own tooling.
 
-The copied tests pass without the TrueNAS API client installed, because the
-cinder tree does not install it: `./tools/test_client_versions.sh` checks this
-in its `no-client` run.
+The copied tests pass without websocket-client installed, because the cinder
+tree may not install it (it is a driver extra there): `./tools/run_tests.sh`
+checks this in its `no-websocket` run.
+
+The driver's own client modules (`jsonrpc.py`, `scram.py`, `auth.py`) are
+synced with the driver. Upstream, add the `truenas` extra to cinder's
+`setup.cfg` and `driver-requirements.txt`, pinned like the DataCore extra:
+`websocket-client>=1.3.2`.

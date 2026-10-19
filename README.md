@@ -162,7 +162,7 @@ test run sees it. `uv run pytest` covers only the client in the default
 environment, so before committing, run the tests against all three:
 
 ```console
-./tools/test_client_versions.sh    # extra arguments go to pytest
+./tools/run_tests.sh              # extra arguments go to pytest
 ```
 
 Each run's header names the client it used. The two client releases are

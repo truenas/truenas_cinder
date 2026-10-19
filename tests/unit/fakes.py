@@ -26,8 +26,16 @@ the fake:
 * implements ``promote_dataset`` by re-parenting the origin snapshot.
 
 Every call is recorded in ``calls`` so tests can assert exact sequences.
+
+``FakeScramServer`` is the TrueNAS side of the API-key SCRAM login, written
+from RFC 5802 independently of ``truenas_cinder.scram`` so the client is
+tested against something other than itself.
 """
 
+import base64
+import hashlib
+import hmac
+import os
 from typing import Any
 
 from truenas_cinder import common, opts
@@ -722,3 +730,86 @@ class FakeTrueNASClient:
     def delete_initiator(self, initiator_id: int) -> None:
         self._record('delete_initiator', initiator_id=initiator_id)
         self.initiators.pop(initiator_id, None)
+
+
+class FakeScramServer:
+    """TrueNAS's side of the API-key SCRAM-SHA-512 login (RFC 5802).
+
+    ``expected_binding`` is the ``tls-server-end-point`` data of the
+    certificate TrueNAS presents, or None when the server expects an
+    unbound exchange. A client bound to a different certificate (a man in
+    the middle) is rejected, as TrueNAS rejects it.
+    """
+
+    NONCE_SIZE = 32
+
+    def __init__(
+        self,
+        username: str,
+        key_id: int,
+        secret: str,
+        *,
+        salt: bytes = b'truenas-cinder-salt',
+        iterations: int = 50_000,
+        expected_binding: bytes | None = None,
+    ) -> None:
+        self.user = f'{username}:{key_id}'
+        self.salt = salt
+        self.iterations = iterations
+        self.expected_binding = expected_binding
+        salted = hashlib.pbkdf2_hmac(
+            'sha512', secret.encode(), salt, iterations
+        )
+        client_key = hmac.new(salted, b'Client Key', 'sha512').digest()
+        self.stored_key = hashlib.sha512(client_key).digest()
+        self.server_key = hmac.new(salted, b'Server Key', 'sha512').digest()
+        self.gs2_header = ''
+        self.client_first_bare = ''
+        self.server_first = ''
+        self.nonce = ''
+
+    @staticmethod
+    def _attributes(message: str) -> dict[str, str]:
+        return dict(part.split('=', 1) for part in message.split(','))
+
+    def first(self, client_first: str) -> str:
+        header, _, bare = client_first.partition(',,')
+        attributes = self._attributes(bare)
+        if attributes['n'] != self.user:
+            raise ValueError(f'unknown user {attributes["n"]!r}')
+        client_nonce = base64.b64decode(attributes['r'])
+        self.gs2_header = header + ',,'
+        self.client_first_bare = bare
+        self.nonce = base64.b64encode(
+            client_nonce + os.urandom(self.NONCE_SIZE)
+        ).decode()
+        self.server_first = (
+            f'r={self.nonce},s={base64.b64encode(self.salt).decode()},'
+            f'i={self.iterations}'
+        )
+        return self.server_first
+
+    def final(self, client_final: str) -> str:
+        without_proof, _, proof = client_final.rpartition(',p=')
+        attributes = self._attributes(without_proof)
+        if attributes['r'] != self.nonce:
+            raise ValueError('nonce mismatch')
+        binding = self.gs2_header.encode() + (self.expected_binding or b'')
+        if base64.b64decode(attributes['c']) != binding:
+            raise ValueError('channel binding mismatch')
+        auth_message = (
+            f'{self.client_first_bare},{self.server_first},{without_proof}'
+        ).encode()
+        signature = hmac.new(self.stored_key, auth_message, 'sha512').digest()
+        proof_bytes = base64.b64decode(proof)
+        if len(proof_bytes) != len(signature):
+            raise ValueError('wrong proof length')
+        client_key = bytes(
+            proof_bytes[i] ^ signature[i] for i in range(len(signature))
+        )
+        if hashlib.sha512(client_key).digest() != self.stored_key:
+            raise ValueError('wrong key')
+        server_signature = hmac.new(
+            self.server_key, auth_message, 'sha512'
+        ).digest()
+        return 'v=' + base64.b64encode(server_signature).decode()

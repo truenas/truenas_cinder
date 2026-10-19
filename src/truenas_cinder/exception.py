@@ -14,10 +14,12 @@
 #    under the License.
 """Driver-local exceptions.
 
-These wrap the raw ``truenas_api_client`` transport/RPC errors into a small,
-typed surface the driver reasons about. User-facing failures are raised as
+The TrueNAS connection and API errors, as a small typed surface the driver
+reasons about. User-facing failures are raised as
 ``cinder.exception.VolumeBackendAPIException`` at the driver boundary.
 """
+
+from __future__ import annotations
 
 
 class TrueNASClientError(Exception):
@@ -25,7 +27,27 @@ class TrueNASClientError(Exception):
 
 
 class TrueNASConnectionError(TrueNASClientError):
-    """The WebSocket connection could not be established or was lost."""
+    """The WebSocket connection could not be established or was lost.
+
+    ``request_sent`` says whether the failed call had already reached the
+    connection. When it had not, TrueNAS cannot have run it, so it is safe
+    to send again on a new connection.
+    """
+
+    def __init__(self, message: str, *, request_sent: bool = False) -> None:
+        super().__init__(message)
+        self.request_sent: bool = request_sent
+
+
+class TrueNASAuthError(TrueNASClientError):
+    """TrueNAS did not accept the login, or the login could not be done."""
+
+
+class TrueNASTimeout(TrueNASClientError):
+    """TrueNAS did not answer a call in time.
+
+    TrueNAS may still have run the call, so it must not be sent again.
+    """
 
 
 class TrueNASApiError(TrueNASClientError):

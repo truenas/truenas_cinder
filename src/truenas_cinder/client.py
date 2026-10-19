@@ -12,75 +12,64 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-"""Typed adapter over ``truenas_api_client``.
+"""Typed TrueNAS API client used by the driver.
 
-This is the single place ``truenas_api_client`` is imported. The import is
-lazy: the package is not in global-requirements, so if it is missing the
-driver still loads and reports the failure from ``check_for_setup_error``.
-Every TrueNAS JSON-RPC call the driver makes goes through a typed method here
-so the rest of the codebase never touches raw dicts of ``Any``.
+Every TrueNAS call the driver makes goes through a typed method here, so the
+rest of the codebase never touches raw dicts of ``Any``. Underneath,
+``jsonrpc`` carries the calls and ``auth`` logs in. This class owns the
+session: it reconnects and logs in again when the connection drops, and
+decides which calls may be sent again.
 
 All TrueNAS calls here are synchronous JSON-RPC 2.0 requests; none of the
 dataset, snapshot, or iSCSI methods used by the driver are jobs.
 """
 
-import errno as _errno
+from __future__ import annotations
+
 import json
 import ssl
+import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from typing import Any, NamedTuple, Protocol, cast
 
-from truenas_cinder import common
+from oslo_log import log as logging
+
+from truenas_cinder import auth, common, jsonrpc
 from truenas_cinder.exception import (
     TrueNASApiError,
-    TrueNASClientError,
     TrueNASConnectionError,
     TrueNASNotFound,
 )
 
-# --- Lazy import of the external client (not in global-requirements) ------
-#: Why the client could not be imported, reported instead of a bare
-#: "not installed" -- the package may be present but broken.
-_import_error: str | None = None
-try:
-    from truenas_api_client import Client as _client_factory
-    from truenas_api_client.exc import ClientException as _ClientException
-except ImportError as _exc:  # pragma: no cover - see check_for_setup_error
-    _client_factory = None
-    _ClientException = None
-    _import_error = str(_exc)
+LOG = logging.getLogger(__name__)
 
-# Selectable API-key mechanisms (PLAIN through auth.login_ex, and SCRAM) only
-# exist in newer client releases. The TS-25.10 releases predate them and send
-# the key with the auth.login_with_api_key call, which TrueNAS 25.10 accepts,
-# so their absence is not an error.
-try:
-    from truenas_api_client.auth_api_key import APIKeyAuthMech as _AuthMech
-except ImportError:
-    _AuthMech = None
-
-#: API-key authentication mechanisms.
-#:
-#: ``PLAIN`` sends the API key over the (TLS-protected) connection and is what
-#: TrueNAS SCALE 25.10 supports. ``SCRAM`` never transmits the key but requires
-#: a server that implements it (TrueNAS 26+). The upstream client deliberately
-#: never auto-downgrades SCRAM to PLAIN -- picking the mechanism from the
-#: server's unauthenticated advertisement would let a man-in-the-middle strip
-#: SCRAM and harvest the key -- so the operator selects it explicitly.
-AUTH_PLAIN: str = 'PLAIN'
-AUTH_SCRAM: str = 'SCRAM'
-AUTH_MECHANISMS: tuple[str, ...] = (AUTH_PLAIN, AUTH_SCRAM)
+#: API-key authentication mechanisms (see ``auth``).
+AUTH_PLAIN: str = auth.AUTH_PLAIN
+AUTH_SCRAM: str = auth.AUTH_SCRAM
+AUTH_MECHANISMS: tuple[str, ...] = auth.AUTH_MECHANISMS
 
 #: API version this driver is developed and tested against.
 REQUIRED_API_VERSION: str = 'v25.10.0'
 
-#: True when ``truenas_api_client`` is importable in this environment.
-DEPENDENCY_AVAILABLE: bool = _client_factory is not None
+#: True when ``websocket-client``, the one third-party library the client
+#: needs, is importable in this environment.
+DEPENDENCY_AVAILABLE: bool = jsonrpc.DEPENDENCY_AVAILABLE
+#: Why ``websocket-client`` could not be imported, if it could not.
+_import_error: str | None = jsonrpc._import_error
 
 #: Type alias for a decoded TrueNAS JSON object.
 JsonDict = dict[str, Any]
+
+# Calls that only read, so are safe to send again after a lost connection
+# even though TrueNAS may already have run them.
+_READ_ONLY_SUFFIXES = ('.query', '.get_instance', '.config')
+_READ_ONLY_METHODS = frozenset({'core.ping', 'auth.mechanism_choices'})
+
+
+def _is_read_only(method: str) -> bool:
+    return method in _READ_ONLY_METHODS or method.endswith(_READ_ONLY_SUFFIXES)
 
 
 class PoolSpace(NamedTuple):
@@ -94,59 +83,69 @@ class PoolSpace(NamedTuple):
         return self.used + self.available
 
 
-class _RawClient(Protocol):
-    """The subset of ``truenas_api_client.Client`` the adapter uses.
+class _Connection(Protocol):
+    """What the client needs from a connection (``jsonrpc.Connection``)."""
 
-    The concrete client exposes these through ``__getattr__`` delegation, so
-    we describe the contract explicitly and ``cast`` to it -- that keeps every
-    call site precisely typed instead of ``Any``.
-    """
+    @property
+    def closed(self) -> bool: ...
 
     def call(self, method: str, *params: object) -> object: ...
 
-    def login_with_api_key(
-        self,
-        username: str,
-        api_key: str,
-        auth_mechanism: object = ...,
-        *,
-        channel_binding: bool = ...,
-    ) -> None: ...
+    def peer_certificate(self) -> bytes | None: ...
 
     def close(self) -> None: ...
 
 
-class TrueNASClient:
-    """Stateful wrapper around one long-lived TrueNAS WebSocket connection."""
+#: Opens a connection: ``(url, verify_ssl, call_timeout)``.
+ConnectionFactory = Callable[[str, bool, float], _Connection]
 
-    def __init__(self) -> None:
-        self._client: _RawClient | None = None
+
+def _open_connection(
+    url: str, verify_ssl: bool, call_timeout: float
+) -> _Connection:
+    return jsonrpc.Connection.open(
+        url, verify_ssl=verify_ssl, call_timeout=call_timeout
+    )
+
+
+class _Settings(NamedTuple):
+    """What ``connect`` was given, kept for reconnecting."""
+
+    url: str
+    username: str
+    api_key: str
+    verify_ssl: bool
+    timeout: float
+    mechanism: str
+    channel_binding: bool | None
+
+
+class TrueNASClient:
+    """A logged-in session with one TrueNAS system."""
+
+    def __init__(
+        self, connection_factory: ConnectionFactory = _open_connection
+    ) -> None:
+        self._open_connection = connection_factory
+        self._conn: _Connection | None = None
+        self._settings: _Settings | None = None
+        # Serializes reconnecting, so concurrent calls open one connection.
+        self._lock = threading.Lock()
 
     # -- connection --------------------------------------------------------
 
     @staticmethod
     def dependency_available() -> bool:
-        """Whether the ``truenas_api_client`` dependency is installed."""
+        """Whether ``websocket-client`` is installed."""
         return DEPENDENCY_AVAILABLE
 
     @staticmethod
     def dependency_error() -> str | None:
-        """Why ``truenas_api_client`` could not be imported, if it could not.
+        """Why ``websocket-client`` could not be imported, if it could not.
 
-        Distinguishes a missing package (``No module named
-        'truenas_api_client'``) from a present but broken one, such as a
-        missing dependency of the client.
+        Distinguishes a missing package from a present but broken one.
         """
         return _import_error
-
-    @staticmethod
-    def supports_auth_mechanisms() -> bool:
-        """Whether the installed client can select PLAIN or SCRAM.
-
-        False for TS-25.10 client releases, which authenticate with the key
-        alone through ``auth.login_with_api_key``.
-        """
-        return _AuthMech is not None
 
     def connect(
         self,
@@ -155,87 +154,59 @@ class TrueNASClient:
         api_key: str,
         *,
         verify_ssl: bool = True,
-        timeout: float = 60.0,
+        timeout: float = jsonrpc.CALL_TIMEOUT,
         auth_mechanism: str = AUTH_PLAIN,
         channel_binding: bool | None = None,
     ) -> None:
-        """Open the WebSocket connection and authenticate.
+        """Open the connection and log in.
 
         ``url`` is the full endpoint, e.g. ``wss://host/api/current``.
-        ``auth_mechanism`` is ``PLAIN`` or ``SCRAM`` (see AUTH_MECHANISMS).
-        ``channel_binding`` applies to SCRAM only and defaults to
-        ``verify_ssl`` (binding requires a verified TLS chain).
+        ``auth_mechanism`` is ``PLAIN`` or ``SCRAM`` (see ``auth``).
+        ``channel_binding`` applies to SCRAM: None binds the login to the
+        TLS certificate whenever the connection uses TLS, True requires
+        that, and False turns it off.
         """
-        if _client_factory is None:
-            raise TrueNASConnectionError(
-                f'truenas_api_client could not be imported ({_import_error}).'
-            )
         mechanism = auth_mechanism.upper()
         if mechanism not in AUTH_MECHANISMS:
             raise TrueNASConnectionError(
                 f'Invalid authentication mechanism {auth_mechanism!r}; '
                 f'expected one of {", ".join(AUTH_MECHANISMS)}.'
             )
-        if channel_binding is None:
-            channel_binding = verify_ssl
+        self.close()
+        settings = _Settings(
+            url,
+            username,
+            api_key,
+            verify_ssl,
+            timeout,
+            mechanism,
+            channel_binding,
+        )
+        with self._lock:
+            self._conn = self._log_in(settings)
+            self._settings = settings
+
+    def _log_in(self, settings: _Settings) -> _Connection:
+        """Open a connection and log it in."""
+        conn = self._open_connection(
+            settings.url, settings.verify_ssl, settings.timeout
+        )
         try:
-            raw = cast(
-                '_RawClient',
-                _client_factory(
-                    uri=url, verify_ssl=verify_ssl, call_timeout=timeout
-                ),
-            )
-        except Exception as exc:
-            raise TrueNASConnectionError(
-                f'Failed to connect to TrueNAS at {url}: {exc}'
-            ) from exc
-        try:
-            self._authenticate(
-                raw, username, api_key, mechanism, channel_binding
+            auth.login(
+                conn,
+                settings.username,
+                settings.api_key,
+                settings.mechanism,
+                channel_binding=settings.channel_binding,
             )
         except Exception as exc:
             # Don't leave an unauthenticated connection open.
-            try:
-                raw.close()
-            except Exception:  # pragma: no cover - best effort
-                pass
+            conn.close()
             raise TrueNASConnectionError(
-                f'Failed to authenticate to TrueNAS at {url} using '
-                f'{mechanism}: {exc}'
+                f'Failed to authenticate to TrueNAS at {settings.url} using '
+                f'{settings.mechanism}: {exc}'
             ) from exc
-        self._client = raw
-
-    @staticmethod
-    def _authenticate(
-        raw: _RawClient,
-        username: str,
-        api_key: str,
-        mechanism: str,
-        channel_binding: bool,
-    ) -> None:
-        """Log in with whichever API-key method the installed client has."""
-        if _AuthMech is not None:
-            # Newer clients: PLAIN goes through auth.login_ex, which needs
-            # the key owner's username, and SCRAM is available.
-            raw.login_with_api_key(
-                username,
-                api_key,
-                _AuthMech(mechanism),
-                channel_binding=channel_binding,
-            )
-            return
-        # TS-25.10 clients send the key alone, so the login name is unused.
-        if mechanism == AUTH_SCRAM:
-            raise ValueError(
-                'the installed truenas_api_client cannot do SCRAM; it needs '
-                'a release from the TrueNAS 26 series. Install one, or set '
-                'truenas_auth_mechanism = PLAIN'
-            )
-        if raw.call('auth.login_with_api_key', api_key) is not True:
-            raise ValueError(
-                'Invalid API key (this truenas_api_client release sends the '
-                'key alone, so the login name is not involved)'
-            )
+        return conn
 
     @staticmethod
     def api_versions(
@@ -269,12 +240,12 @@ class TrueNASClient:
 
     def close(self) -> None:
         """Close the connection if open (idempotent)."""
-        if self._client is not None:
-            try:
-                self._client.close()
-            except Exception:  # pragma: no cover - best effort
-                pass
-            self._client = None
+        with self._lock:
+            conn = self._conn
+            self._conn = None
+            self._settings = None
+        if conn is not None:
+            conn.close()
 
     def ping(self) -> None:
         """Liveness check (``core.ping``)."""
@@ -282,50 +253,60 @@ class TrueNASClient:
 
     # -- low-level call plumbing ------------------------------------------
 
+    def _connection(self) -> _Connection:
+        """The open connection, reconnecting and logging in if it dropped."""
+        conn = self._conn
+        if conn is not None and not conn.closed:
+            return conn
+        with self._lock:
+            conn = self._conn
+            if conn is not None and not conn.closed:
+                return conn
+            settings = self._settings
+            if settings is None:
+                raise TrueNASConnectionError(
+                    'TrueNAS client is not connected.'
+                )
+            LOG.warning(
+                'The connection to TrueNAS at %s was lost; reconnecting.',
+                settings.url,
+            )
+            conn = self._log_in(settings)
+            self._conn = conn
+            return conn
+
+    def _discard(self, conn: _Connection) -> None:
+        """Forget ``conn`` so the next call opens a new connection."""
+        with self._lock:
+            if self._conn is conn:
+                self._conn = None
+        conn.close()
+
     def _call(self, method: str, *params: object) -> object:
-        if self._client is None:
-            raise TrueNASConnectionError('TrueNAS client is not connected.')
-        try:
-            return self._client.call(method, *params)
-        except Exception as exc:
-            raise self._translate(method, exc) from exc
+        """Call ``method``, retrying once where that is safe.
 
-    @staticmethod
-    def _errno_of(exc: Exception) -> int | None:
-        """Best-effort error code for a raw client exception.
-
-        TrueNAS reports "object does not exist" as a validation error, and
-        ``ValidationErrors`` carries no top-level ``errno`` -- the real code
-        sits on each collected entry. Fall back to that collection, but only
-        trust it when every entry agrees, so a partial validation failure is
-        never mistaken for "already gone".
+        A call is sent again on a new connection only when TrueNAS cannot
+        have run it -- the request never left, or TrueNAS refused it because
+        the session had ended -- or when it only reads. A call that may have
+        run is never repeated: creating a dataset twice is not harmless.
         """
-        errno_val: object = getattr(exc, 'errno', None)
-        if isinstance(errno_val, int):
-            return errno_val
-        raw_errors: object = getattr(exc, 'errors', None)
-        if isinstance(raw_errors, (list, tuple)):
-            entries = cast('list[object] | tuple[object, ...]', raw_errors)
-            codes: set[int] = set()
-            for entry in entries:
-                code: object = getattr(entry, 'errcode', None)
-                if not isinstance(code, int):
-                    return None
-                codes.add(code)
-            if len(codes) == 1:
-                return codes.pop()
-        return None
-
-    @staticmethod
-    def _translate(method: str, exc: Exception) -> TrueNASClientError:
-        """Map a raw client exception to the driver's typed hierarchy."""
-        if _ClientException is not None and isinstance(exc, _ClientException):
-            errno_val = TrueNASClient._errno_of(exc)
-            message = f'{method} failed: {exc}'
-            if errno_val == _errno.ENOENT:
-                return TrueNASNotFound(message, errno=errno_val)
-            return TrueNASApiError(message, errno=errno_val)
-        return TrueNASClientError(f'{method} failed: {exc}')
+        for attempt in (1, 2):
+            conn = self._connection()
+            try:
+                return conn.call(method, *params)
+            except TrueNASConnectionError as exc:
+                self._discard(conn)
+                retry_safe = not exc.request_sent or _is_read_only(method)
+                if attempt == 1 and retry_safe:
+                    continue
+                raise
+            except TrueNASApiError as exc:
+                if attempt == 1 and exc.errno == jsonrpc.ENOTAUTHENTICATED:
+                    LOG.warning('TrueNAS ended the session; logging in again.')
+                    self._discard(conn)
+                    continue
+                raise
+        raise AssertionError('unreachable')  # pragma: no cover
 
     def _query(
         self,

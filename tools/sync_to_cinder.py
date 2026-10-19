@@ -57,13 +57,16 @@ DRIVER_MODULES = (
     'common.py',
     'exception.py',
     'opts.py',
+    'jsonrpc.py',
+    'scram.py',
+    'auth.py',
     'client.py',
     'driver.py',
 )
 # Test modules: the shared fakes plus every test_*.py, found at run time so
 # a new test module cannot be left behind. An __init__.py is generated for
 # the destination package; tests/conftest.py is pytest-only and stays here.
-TEST_SUPPORT_MODULES = ('fakes.py',)
+TEST_SUPPORT_MODULES = ('fakes.py', 'certificates.py')
 
 
 def find_test_modules() -> list[str]:

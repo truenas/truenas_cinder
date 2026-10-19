@@ -193,7 +193,7 @@ class TrueNASDriver(driver.ISCSIDriver):
     def check_for_setup_error(self) -> None:
         if not tn_client.TrueNASClient.dependency_available():
             raise exception.VolumeBackendAPIException(
-                data='truenas_api_client could not be imported '
+                data='websocket-client could not be imported '
                 f'({tn_client.TrueNASClient.dependency_error()}). Install it '
                 'in the Python environment that runs cinder-volume.'
             )
