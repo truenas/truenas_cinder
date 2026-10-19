@@ -27,12 +27,6 @@ TRUENAS_CINDER_DIR=${TRUENAS_CINDER_DIR:-$DEST/truenas-cinder}
 # a checkout of the driver's own review.
 TRUENAS_SYNC_DRIVER=$(trueorfalse True TRUENAS_SYNC_DRIVER)
 
-# The TrueNAS API client, installed into DevStack's Python environment.
-# devstack/prepare-vm.sh reads these two defaults, so this is the one place
-# to change the pinned version.
-TRUENAS_API_CLIENT_REPO=${TRUENAS_API_CLIENT_REPO:-https://github.com/truenas/api_client.git}
-TRUENAS_API_CLIENT_REF=${TRUENAS_API_CLIENT_REF:-TS-25.10.7}
-
 # Backend settings used by the [truenas] stanza in local.conf. TRUENAS_IP and
 # TRUENAS_API_KEY have no default and must be set in local.conf.
 TRUENAS_LOGIN=${TRUENAS_LOGIN:-truenas_admin}

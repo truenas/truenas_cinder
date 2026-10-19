@@ -37,8 +37,8 @@ readonly TEMPLATE=$SCRIPT_DIR/local.conf.example
 readonly SETTINGS_VARS=(
     TRUENAS_IP TRUENAS_URL TRUENAS_API_KEY TRUENAS_LOGIN TRUENAS_USER
     TRUENAS_POOL TRUENAS_PORTAL_ID TRUENAS_DATASET_ROOT TRUENAS_VERIFY_SSL
-    TRUENAS_INSECURE_SKIP_VERIFY TRUENAS_MULTIPATH TRUENAS_API_CLIENT_REPO
-    TRUENAS_API_CLIENT_REF ADMIN_PASSWORD DEVSTACK_BRANCH HOST_IP LIBVIRT_TYPE
+    TRUENAS_INSECURE_SKIP_VERIFY TRUENAS_MULTIPATH ADMIN_PASSWORD
+    DEVSTACK_BRANCH HOST_IP LIBVIRT_TYPE
 )
 
 DRY_RUN=False
@@ -153,20 +153,6 @@ parse_args() {
     done
 }
 
-# The default for a variable as written in devstack/settings, so the API
-# client version pinned there is the only one to maintain.
-settings_default() {
-    local name=$1 line
-    line=$(grep -m1 "^${name}=" "$SCRIPT_DIR/settings") ||
-        die "devstack/settings has no default for $name"
-    line=${line#*:-}
-    line=${line%\}}
-    if [[ -z "$line" || "$line" == *'$'* || "$line" == *'='* ]]; then
-        die "could not read the default for $name from devstack/settings"
-    fi
-    printf '%s' "$line"
-}
-
 # DevStack expands local.conf values through eval, so a value the shell
 # would interpret (quotes, $, backticks, spaces) cannot be carried safely.
 require_plain() {
@@ -198,8 +184,6 @@ resolve_settings() {
     fi
     TRUENAS_VERIFY_SSL=$(normalize_bool "$TRUENAS_VERIFY_SSL")
     TRUENAS_MULTIPATH=$(normalize_bool "${TRUENAS_MULTIPATH:-False}")
-    TRUENAS_API_CLIENT_REPO=${TRUENAS_API_CLIENT_REPO:-$(settings_default TRUENAS_API_CLIENT_REPO)}
-    TRUENAS_API_CLIENT_REF=${TRUENAS_API_CLIENT_REF:-$(settings_default TRUENAS_API_CLIENT_REF)}
     if [[ -z "${ADMIN_PASSWORD:-}" ]]; then
         ADMIN_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(12))')
     fi
@@ -214,7 +198,7 @@ resolve_settings() {
         die "LIBVIRT_TYPE must be kvm or qemu, got '$LIBVIRT_TYPE'"
     local name
     for name in TRUENAS_IP TRUENAS_API_KEY TRUENAS_LOGIN TRUENAS_POOL \
-        TRUENAS_DATASET_ROOT TRUENAS_API_CLIENT_REF ADMIN_PASSWORD; do
+        TRUENAS_DATASET_ROOT ADMIN_PASSWORD; do
         require_plain "$name"
     done
     if [[ -n "$HOST_IP" ]]; then
@@ -318,8 +302,9 @@ preflight_credentials() {
     venv=$(mktemp -d)
     CLEANUP_DIRS+=("$venv")
     python3 -m venv "$venv"
+    # The driver's client needs websocket-client, and logs through oslo.log.
     "$venv/bin/pip" install --quiet --disable-pip-version-check \
-        "truenas-api-client@git+${TRUENAS_API_CLIENT_REPO}@${TRUENAS_API_CLIENT_REF}"
+        "websocket-client>=1.3.2" oslo.log
 
     local insecure=false
     [[ "$TRUENAS_VERIFY_SSL" == True ]] || insecure=true
@@ -424,7 +409,7 @@ readonly TEMPLATE_VARS=(
     ADMIN_PASSWORD HOST_IP LIBVIRT_TYPE
     TRUENAS_IP TRUENAS_LOGIN TRUENAS_API_KEY TRUENAS_VERIFY_SSL TRUENAS_POOL
     TRUENAS_DATASET_ROOT TRUENAS_PORTAL_ID TRUENAS_MULTIPATH
-    TRUENAS_API_CLIENT_REF TRUENAS_CINDER_REPO TRUENAS_CINDER_BRANCH
+    TRUENAS_CINDER_REPO TRUENAS_CINDER_BRANCH
 )
 
 # Print devstack/local.conf.example with its placeholders filled in. Done in
@@ -443,7 +428,6 @@ render_local_conf() {
         TRUENAS_DATASET_ROOT="$TRUENAS_DATASET_ROOT" \
         TRUENAS_PORTAL_ID="$TRUENAS_PORTAL_ID" \
         TRUENAS_MULTIPATH="$TRUENAS_MULTIPATH" \
-        TRUENAS_API_CLIENT_REF="$TRUENAS_API_CLIENT_REF" \
         TRUENAS_CINDER_REPO="$PLUGIN_SRC" \
         TRUENAS_CINDER_BRANCH="$TRUENAS_CINDER_BRANCH" \
         python3 - "$TEMPLATE" "${TEMPLATE_VARS[@]}" <<'PY'

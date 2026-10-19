@@ -7,7 +7,7 @@ backend, then exercise it by hand and with Tempest.
 | ---- | ---------- |
 | `prepare-vm.sh` | Prepares a fresh Ubuntu 24.04 or 26.04 VM and writes `local.conf` |
 | `local.conf.example` | The DevStack configuration `prepare-vm.sh` fills in |
-| `plugin.sh`, `settings` | A DevStack plugin: copies the driver into DevStack's cinder tree and installs the TrueNAS API client before `cinder-volume` starts |
+| `plugin.sh`, `settings` | A DevStack plugin: copies the driver into DevStack's cinder tree and installs its one library, `websocket-client`, before `cinder-volume` starts |
 
 ## What you need
 
@@ -69,7 +69,7 @@ Or pass `--stack` to `prepare-vm.sh` to run it straight away.
 During `stack.sh`, the plugin first checks that TrueNAS answers, so a wrong
 address fails in the first minute rather than at the end. Once cinder is
 installed, it copies the driver in with `tools/sync_to_cinder.py` and installs
-the TrueNAS API client, before `cinder-volume` is configured or started.
+`websocket-client`, before `cinder-volume` is configured or started.
 
 ## Check that it works
 
@@ -146,7 +146,6 @@ otherwise never updates a plugin it has already cloned.
 | `TRUENAS_VERIFY_SSL` | `True` | Verify the TrueNAS certificate |
 | `TRUENAS_MULTIPATH` | `False` | Use multipath; set `True` once TrueNAS has a second portal address |
 | `TRUENAS_SYNC_DRIVER` | `True` | Copy the driver from this repository. Set `False` when the cinder tree under test already contains it, such as the driver's own review |
-| `TRUENAS_API_CLIENT_REF` | `TS-25.10.7` | Release tag of the TrueNAS API client to install |
 
 ## Troubleshooting
 

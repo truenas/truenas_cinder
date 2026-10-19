@@ -49,10 +49,9 @@ TRUENAS_PORTAL_ID=@TRUENAS_PORTAL_ID@
 # Set to True once TrueNAS has a second portal address. With a single path
 # there is nothing for multipathd to combine.
 TRUENAS_MULTIPATH=@TRUENAS_MULTIPATH@
-TRUENAS_API_CLIENT_REF=@TRUENAS_API_CLIENT_REF@
 
-# Copies the driver into DevStack's cinder tree and installs the TrueNAS API
-# client before cinder-volume starts. See devstack/README.md.
+# Copies the driver into DevStack's cinder tree and installs its one library,
+# websocket-client, before cinder-volume starts. See devstack/README.md.
 enable_plugin truenas-cinder @TRUENAS_CINDER_REPO@ @TRUENAS_CINDER_BRANCH@
 
 # Only the TrueNAS backend. DevStack has no lib/cinder_backends/truenas, so it

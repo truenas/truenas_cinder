@@ -9,17 +9,16 @@ features:
 
     Supported operations: create and delete volume, attach and detach,
     extend, create and delete snapshot, revert volume to snapshot, create
-    volume from snapshot, clone volume, thin provisioning, multipath, and
-    multiattach.
+    volume from snapshot, clone volume, retype, thin provisioning,
+    multipath, and multiattach.
 
-    The driver lazily imports the TrueNAS API client (``truenas_api_client``),
-    which is **not** part of ``global-requirements`` and must be installed in
-    the environment that runs ``cinder-volume``, for example::
+    The driver needs the ``websocket-client`` package (1.3.2 or later) in the
+    environment that runs ``cinder-volume``. If it is missing, the driver
+    fails ``check_for_setup_error`` with an actionable message.
 
-        pip install "truenas-api-client @ git+https://github.com/truenas/api_client.git@TS-25.10.7"
-
-    If it is missing, the driver fails ``check_for_setup_error`` with an
-    actionable message.
+    The driver logs in with a TrueNAS API key. With TrueNAS 26 or later,
+    ``truenas_auth_mechanism = SCRAM`` logs in without sending the key and
+    binds the login to TrueNAS's TLS certificate.
 
     The iSCSI base name (IQN prefix) and portal ports are read from TrueNAS,
     so Cinder's generic ``target_prefix`` option is not used.

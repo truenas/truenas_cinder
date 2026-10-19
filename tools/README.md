@@ -80,9 +80,8 @@ package path:
 | `truenas_cinder` | `cinder.volume.drivers.truenas` |
 | `tests.unit`     | `cinder.tests.unit.volume.drivers.truenas` |
 
-The rewrite is word-boundary matched, so it does **not** touch the lazily
-imported `truenas_api_client` dependency or the `truenas_*` config option
-names (e.g. `truenas_pool`, `truenas_api_url`).
+The rewrite is word-boundary matched, so it does **not** touch the
+`truenas_*` config option names (e.g. `truenas_pool`, `truenas_api_url`).
 
 ## What it does NOT do
 

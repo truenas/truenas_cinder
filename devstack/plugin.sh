@@ -19,9 +19,10 @@
 #   stack pre-install  Stop early if the TrueNAS settings are missing or the
 #                      TrueNAS API is unreachable, rather than after a full run.
 #   stack install      Copy the driver into DevStack's cinder tree and install
-#                      the TrueNAS API client. This runs after cinder is
-#                      installed but before cinder-volume is configured or
-#                      started, so the backend comes up on its first start.
+#                      websocket-client, its one library. This runs after
+#                      cinder is installed but before cinder-volume is
+#                      configured or started, so the backend comes up on its
+#                      first start.
 
 # shellcheck disable=SC2154  # CINDER_DIR and the TRUENAS_* settings come from DevStack
 
@@ -44,10 +45,9 @@ function truenas_sync_driver {
     python3 "$TRUENAS_CINDER_DIR/tools/sync_to_cinder.py" "$CINDER_DIR" --force >/dev/null
 }
 
-function truenas_install_api_client {
-    # No spaces around '@': pip_install word-splits its arguments, so the
-    # usual "name @ url" form would reach pip as three arguments.
-    pip_install "truenas-api-client@git+${TRUENAS_API_CLIENT_REPO}@${TRUENAS_API_CLIENT_REF}"
+function truenas_install_dependencies {
+    # pip_install applies DevStack's upper-constraints, which pin it.
+    pip_install "websocket-client>=1.3.2"
 }
 
 if is_service_enabled c-vol; then
@@ -59,7 +59,7 @@ if is_service_enabled c-vol; then
             echo_summary "Copying the TrueNAS driver into $CINDER_DIR"
             truenas_sync_driver
         fi
-        echo_summary "Installing the TrueNAS API client"
-        truenas_install_api_client
+        echo_summary "Installing the TrueNAS driver's dependencies"
+        truenas_install_dependencies
     fi
 fi

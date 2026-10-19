@@ -35,6 +35,7 @@ Supported operations
 - Copy a volume to an image.
 - Extend a volume.
 - Revert a volume to its most recent snapshot.
+- Retype a volume within the backend, including to a multiattach type.
 - Thin provisioning.
 - Multipath.
 - Multiattach.
@@ -45,12 +46,11 @@ Prerequisites
 - A TrueNAS SCALE system advertising API version ``v25.10.0`` or later,
   reachable from every ``cinder-volume`` host over ``wss`` (HTTPS).
 
-- The ``truenas_api_client`` Python package installed on each
-  ``cinder-volume`` host. It is **not** part of ``global-requirements``, so
-  install it yourself. It is not on PyPI yet, so install it from a release
-  tag -- ``TS-25.10.7`` matches a 25.10 system::
+- The ``websocket-client`` Python package, 1.3.2 or later, on each
+  ``cinder-volume`` host. The driver includes its own TrueNAS API client;
+  this is the one library it needs. Many environments already have it::
 
-    pip install "truenas-api-client @ git+https://github.com/truenas/api_client.git@TS-25.10.7"
+    pip install "websocket-client>=1.3.2"
 
   Install it into the **same Python environment that runs**
   ``cinder-volume``. Installing into the shell's default ``python`` has no
@@ -59,9 +59,8 @@ Prerequisites
   To target the service's own interpreter and verify the result::
 
     CINDER_PY=$(head -1 "$(command -v cinder-volume)" | sed 's/^#!//')
-    sudo "$CINDER_PY" -m pip install \
-      "truenas-api-client @ git+https://github.com/truenas/api_client.git@TS-25.10.7"
-    "$CINDER_PY" -c "import truenas_api_client; print('client OK')"
+    sudo "$CINDER_PY" -m pip install "websocket-client>=1.3.2"
+    "$CINDER_PY" -c "import websocket; print('websocket-client OK')"
 
   If the package is missing, the driver fails ``check_for_setup_error`` with
   an actionable message rather than an import traceback.
@@ -69,9 +68,8 @@ Prerequisites
 - A TrueNAS **API key** for a user with permission to manage datasets and
   iSCSI sharing (*Credentials* → *Local Users* → pick the user → *API Keys*).
   Set ``truenas_login`` to the user that owns it -- on current TrueNAS SCALE
-  usually ``truenas_admin`` rather than ``root``. The ``TS-25.10`` client
-  authenticates with the key alone, but newer client releases (needed for
-  SCRAM) also send the user and reject a mismatch.
+  usually ``truenas_admin`` rather than ``root``. TrueNAS checks that the key
+  belongs to that user and rejects a mismatch.
 
 - An **iSCSI portal** configured on TrueNAS (*Shares* → *Block (iSCSI)* →
   *Portals*). Note its ID; the portal's listen addresses are read at
@@ -163,19 +161,19 @@ The driver-specific options are:
      - Hostname or IP of the TrueNAS system.
    * - ``truenas_login``
      - ``truenas_admin``
-     - TrueNAS user that owns the API key. Sent by newer client releases
-       (the TrueNAS 26 series); ``TS-25.10`` releases authenticate with
-       the key alone.
+     - TrueNAS user that owns the API key. TrueNAS checks that the key
+       belongs to this user.
    * - ``truenas_api_key``
      - (none)
      - TrueNAS API key used to authenticate.
    * - ``truenas_auth_mechanism``
      - ``PLAIN``
      - API-key mechanism. ``PLAIN`` sends the key over the TLS-protected
-       connection and is what TrueNAS SCALE 25.10 supports; ``SCRAM`` never
-       transmits the key but needs TrueNAS 26 or later and a client
-       release from the TrueNAS 26 series. Never negotiated
-       automatically.
+       connection and works with TrueNAS SCALE 25.10 and later. ``SCRAM``
+       proves knowledge of the key without sending it, makes TrueNAS prove
+       the same, and binds the login to TrueNAS's TLS certificate, so a
+       man in the middle cannot complete it; it needs TrueNAS 26 or later.
+       Never negotiated automatically.
    * - ``truenas_verify_ssl``
      - ``true``
      - Verify the TrueNAS TLS certificate.
@@ -219,20 +217,21 @@ The backend refuses to start rather than half-working, and
 
    * - Message
      - Cause and fix
-   * - ``truenas_api_client could not be imported``
-     - The message says why. ``No module named 'truenas_api_client'``
-       means it is absent from the environment the service runs in:
-       re-install it with ``cinder-volume``'s own interpreter. Any other
-       missing module means the install is incomplete.
-   * - ``Invalid API key``
-     - The key is wrong or has been revoked. With a newer client release,
-       also check that ``truenas_login`` names the key's owner (try
-       ``truenas_admin``).
-   * - ``SCRAM authentication is not supported on the remote server``
+   * - ``websocket-client could not be imported``
+     - The message says why. ``No module named 'websocket'`` means it is
+       absent from the environment the service runs in: install it with
+       ``cinder-volume``'s own interpreter. Any other missing module means
+       the install is incomplete.
+   * - ``TrueNAS rejected the API key``
+     - The key is wrong or has been revoked, or ``truenas_login`` does not
+       name the key's owner (try ``truenas_admin``).
+   * - ``The API key has expired``
+     - Create a new key in TrueNAS and update ``truenas_api_key``.
+   * - ``TrueNAS does not offer SCRAM login``
      - TrueNAS predates 26. Leave ``truenas_auth_mechanism`` at ``PLAIN``.
-   * - ``the installed truenas_api_client cannot do SCRAM``
-     - Install a client release from the TrueNAS 26 series, or leave
-       ``truenas_auth_mechanism`` at ``PLAIN``.
+   * - ``Channel binding is not defined for the signature algorithm``
+     - SCRAM binds the login to TrueNAS's TLS certificate, which cannot be
+       done for an Ed25519 certificate. Use an RSA or ECDSA certificate.
    * - ``TrueNAS pool "..." was not found``
      - ``truenas_pool`` is misspelled or the pool is not imported.
    * - ``TrueNAS iSCSI portal N was not found``

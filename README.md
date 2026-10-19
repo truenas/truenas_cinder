@@ -32,20 +32,17 @@ Also confirm TrueNAS runs API `v25.10.0` or later, the iSCSI service is
 enabled with a base name (IQN) set, and that TCP 443 and 3260 are reachable
 from every `cinder-volume` host.
 
-> **Set `truenas_login` to the user that owns the key.** The `TS-25.10`
-> client installed below authenticates with the key alone, but newer client
-> releases (needed for SCRAM) also send the user and reject a mismatch with
-> `Invalid API key`. On current TrueNAS SCALE the owner is usually
-> `truenas_admin`, not `root` or `admin`.
+> **Set `truenas_login` to the user that owns the key.** TrueNAS checks that
+> the key belongs to that user and rejects a mismatch. On current TrueNAS
+> SCALE the owner is usually `truenas_admin`, not `root` or `admin`.
 
-### 1. Install the TrueNAS API client
+### 1. Install websocket-client
 
-The driver imports the client lazily and it is not in cinder's
-global-requirements, so you install it yourself. It is not on PyPI yet, so
-install from a release tag — `TS-25.10.7` matches a 25.10 system:
+The driver talks to TrueNAS with its own client, which needs one library,
+`websocket-client`. Many OpenStack environments already have it; if not:
 
 ```console
-pip install "truenas-api-client @ git+https://github.com/truenas/api_client.git@TS-25.10.7"
+pip install "websocket-client>=1.3.2"
 ```
 
 **Install it into the same Python environment `cinder-volume` runs in.** This
@@ -56,11 +53,10 @@ service's own interpreter:
 ```console
 # Resolve the interpreter cinder-volume actually uses, then install with it
 CINDER_PY=$(head -1 "$(command -v cinder-volume)" | sed 's/^#!//')
-sudo "$CINDER_PY" -m pip install \
-  "truenas-api-client @ git+https://github.com/truenas/api_client.git@TS-25.10.7"
+sudo "$CINDER_PY" -m pip install "websocket-client>=1.3.2"
 
 # Confirm that interpreter can import it
-"$CINDER_PY" -c "import truenas_api_client; print('client OK')"
+"$CINDER_PY" -c "import websocket; print('websocket-client OK')"
 ```
 
 For containerized deployments, add the same `pip install` to the
@@ -103,6 +99,8 @@ truenas_dataset_root = cinder
 truenas_iscsi_portal_id = 1
 # Set false only for a self-signed certificate
 truenas_verify_ssl = true
+# On TrueNAS 26 or later, SCRAM logs in without sending the key
+#truenas_auth_mechanism = SCRAM
 ```
 
 Restart `cinder-volume`, then confirm the backend came up:
@@ -128,10 +126,11 @@ If the backend does not start, `cinder-volume.log` names the exact reason:
 
 | Message | Cause and fix |
 | ------- | ------------- |
-| `truenas_api_client could not be imported` | The message says why. `No module named 'truenas_api_client'` means step 1 went into the wrong environment: re-run it with the service's own interpreter. Any other missing module means the install is incomplete: reinstall it. |
-| `Invalid API key` | The key is wrong or was revoked. With a newer client release, also check that `truenas_login` is the key's owner (try `truenas_admin`). |
-| `SCRAM authentication is not supported` | TrueNAS predates 26. Leave `truenas_auth_mechanism` at its `PLAIN` default. |
-| `the installed truenas_api_client cannot do SCRAM` | Install a client release from the TrueNAS 26 series, or leave `truenas_auth_mechanism` at `PLAIN`. |
+| `websocket-client could not be imported` | The message says why. `No module named 'websocket'` means step 1 went into the wrong environment: re-run it with the service's own interpreter. Any other missing module means the install is incomplete: reinstall it. |
+| `TrueNAS rejected the API key` | The key is wrong or was revoked, or `truenas_login` is not the key's owner (try `truenas_admin`). |
+| `The API key has expired` | Create a new key in TrueNAS and update `truenas_api_key`. |
+| `TrueNAS does not offer SCRAM login` | TrueNAS predates 26. Leave `truenas_auth_mechanism` at its `PLAIN` default. |
+| `Channel binding is not defined for the signature algorithm` | SCRAM binds the login to TrueNAS's TLS certificate, which cannot be done for an Ed25519 certificate. Use an RSA or ECDSA certificate in TrueNAS. |
 | `TrueNAS pool "…" was not found` | `truenas_pool` is misspelled, or the pool is not imported. |
 | `TrueNAS iSCSI portal N was not found` | Wrong `truenas_iscsi_portal_id` — check *Shares → Block (iSCSI) → Portals*. |
 | `TrueNAS did not report an iSCSI base name` | Set a base name in TrueNAS's iSCSI global configuration. The driver reads it from TrueNAS; there is nothing to set in `cinder.conf`. |
@@ -139,10 +138,10 @@ If the backend does not start, `cinder-volume.log` names the exact reason:
 
 ## Licensing
 
-The driver code is **Apache-2.0** (see `LICENSE`) so it can be merged in-tree
-into `openstack/cinder`. It imports the TrueNAS API client lazily: the client
-is **not** a hard dependency and is **not** in cinder's global-requirements,
-so operators install it out-of-band (see the Quick start above).
+The driver code, including its TrueNAS client, is **Apache-2.0** (see
+`LICENSE`) so it can be merged in-tree into `openstack/cinder`. Its one
+third-party library, `websocket-client`, is already an optional dependency
+of cinder for another driver.
 
 ## Development
 
@@ -156,17 +155,14 @@ uv run ruff format     # format
 uv run basedpyright    # type-check (strict)
 ```
 
-The driver has to work with two generations of the TrueNAS API client, which
-log in differently, and with no client installed, which is how cinder's own
-test run sees it. `uv run pytest` covers only the client in the default
-environment, so before committing, run the tests against all three:
+The driver also has to load without `websocket-client`, which is how
+cinder's own test run may see it, and to run on Python 3.9, the Python of
+Red Hat OpenStack Services on OpenShift 18. `uv run pytest` covers only the
+dev environment, so before committing, run every variant:
 
 ```console
 ./tools/run_tests.sh              # extra arguments go to pytest
 ```
-
-Each run's header names the client it used. The two client releases are
-pinned in `uv.lock` as the `client-main` and `client-25-10` dependency groups.
 
 To run the driver in a real OpenStack, see [`devstack/README.md`](devstack/README.md):
 it prepares a dedicated VM and runs DevStack with TrueNAS as the only volume
