@@ -1,0 +1,39 @@
+# The Cinder API tests, run by the test-operator the way the certification
+# suite runs them. Needs the data plane deployed and its compute discovered
+# (volume attach tests boot servers). Feature flags match the DevStack run;
+# validation is off because this lab has no external network for floating
+# IPs, so no test logs in to a guest.
+#
+# Results: oc get tempest tempest-cinder; logs in the tempest-cinder-* pod
+# and its PVC.
+apiVersion: test.openstack.org/v1beta1
+kind: Tempest
+metadata:
+  name: tempest-cinder
+  namespace: openstack
+spec:
+  containerImage: registry.redhat.io/rhoso/openstack-tempest-all-rhel9:18.0
+  storageClass: crc-csi-hostpath-provisioner
+  # The default request, 4 CPUs, doesn't fit next to the control plane on
+  # one CRC node; Tempest mostly waits on the APIs.
+  resources:
+    requests: {cpu: "1", memory: 1Gi}
+    limits: {cpu: "4", memory: 4Gi}
+  tempestRun:
+    concurrency: 2
+    includeList: |
+      tempest.api.volume
+      cinder_tempest_plugin.api.volume
+  tempestconfRun:
+    create: true
+    overrides: |
+      validation.run_validation false
+      volume.vendor_name TrueNAS
+      volume.storage_protocol iSCSI
+      volume-feature-enabled.backup false
+      volume-feature-enabled.volume_revert true
+      volume-feature-enabled.extend_attached_volume true
+      volume-feature-enabled.manage_volume false
+      volume-feature-enabled.manage_snapshot false
+      compute-feature-enabled.volume_multiattach true
+      compute-feature-enabled.attach_encrypted_volume false

@@ -1,0 +1,63 @@
+# Pod attachments to the isolated networks (install_yamls layout): pods get
+# .30-.70 on each network from whereabouts. `datacentre` is the OVN physnet
+# bridge mapping; it must exist before the control plane, so ovn-operator
+# reuses it instead of creating a host-device attachment that would move
+# ospbr into the ovn-controller pod.
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: ctlplane
+  namespace: openstack
+spec:
+  config: |
+    {"cniVersion": "0.3.1", "name": "ctlplane", "type": "macvlan",
+     "master": "ospbr",
+     "ipam": {"type": "whereabouts", "range": "192.168.122.0/24",
+              "range_start": "192.168.122.30", "range_end": "192.168.122.70"}}
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: internalapi
+  namespace: openstack
+spec:
+  config: |
+    {"cniVersion": "0.3.1", "name": "internalapi", "type": "macvlan",
+     "master": "eth0.20",
+     "ipam": {"type": "whereabouts", "range": "172.17.0.0/24",
+              "range_start": "172.17.0.30", "range_end": "172.17.0.70"}}
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: storage
+  namespace: openstack
+spec:
+  config: |
+    {"cniVersion": "0.3.1", "name": "storage", "type": "macvlan",
+     "master": "eth0.21",
+     "ipam": {"type": "whereabouts", "range": "172.18.0.0/24",
+              "range_start": "172.18.0.30", "range_end": "172.18.0.70"}}
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: tenant
+  namespace: openstack
+spec:
+  config: |
+    {"cniVersion": "0.3.1", "name": "tenant", "type": "macvlan",
+     "master": "eth0.22",
+     "ipam": {"type": "whereabouts", "range": "172.19.0.0/24",
+              "range_start": "172.19.0.30", "range_end": "172.19.0.70"}}
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: datacentre
+  namespace: openstack
+spec:
+  config: |
+    {"cniVersion": "0.3.1", "name": "datacentre", "type": "bridge",
+     "bridge": "ospbr", "ipam": {}}

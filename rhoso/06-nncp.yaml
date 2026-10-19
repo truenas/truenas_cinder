@@ -1,0 +1,74 @@
+# The CRC node's second NIC (eth0, hot-added on the Hyper-V `rhoso` switch),
+# laid out as RHOSO's install_yamls dev setup does: eth0 is a port of the
+# Linux bridge `ospbr`, which holds the ctlplane address, and the isolated
+# networks are VLANs on eth0. CRC's own default route stays on tap0/br-ex;
+# never add one here.
+#
+#   ctlplane     192.168.122.10/24  (untagged, on ospbr; gateway .1 = Windows NAT)
+#   internalapi  172.17.0.5/24      VLAN 20
+#   storage      172.18.0.5/24      VLAN 21
+#   tenant       172.19.0.5/24      VLAN 22
+#
+# The host route sends iSCSI to TrueNAS (10.0.0.136) through the Windows NAT
+# rather than CRC's slower user-mode network: cinder-volume runs iscsiadm in
+# the node's namespace.
+apiVersion: nmstate.io/v1
+kind: NodeNetworkConfigurationPolicy
+metadata:
+  name: eth0-crc
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: crc
+  desiredState:
+    interfaces:
+      - name: eth0.20
+        type: vlan
+        state: up
+        vlan: {base-iface: eth0, id: 20, reorder-headers: true}
+        ipv4:
+          enabled: true
+          dhcp: false
+          address: [{ip: 172.17.0.5, prefix-length: 24}]
+        ipv6: {enabled: false}
+      - name: eth0.21
+        type: vlan
+        state: up
+        vlan: {base-iface: eth0, id: 21, reorder-headers: true}
+        ipv4:
+          enabled: true
+          dhcp: false
+          address: [{ip: 172.18.0.5, prefix-length: 24}]
+        ipv6: {enabled: false}
+      - name: eth0.22
+        type: vlan
+        state: up
+        vlan: {base-iface: eth0, id: 22, reorder-headers: true}
+        ipv4:
+          enabled: true
+          dhcp: false
+          address: [{ip: 172.19.0.5, prefix-length: 24}]
+        ipv6: {enabled: false}
+      # eth0's static MAC. Without it the bridge has a random MAC until eth0
+      # is hot-added after boot, and MetalLB keeps answering ARP for the VIPs
+      # with that stale MAC, so nothing reaches them from outside the node.
+      - name: ospbr
+        type: linux-bridge
+        state: up
+        mtu: 1500
+        mac-address: "00:15:5D:00:E6:02"
+        bridge:
+          options:
+            stp: {enabled: false}
+          port:
+            - name: eth0
+              vlan: {}
+        ipv4:
+          enabled: true
+          dhcp: false
+          address: [{ip: 192.168.122.10, prefix-length: 24}]
+        ipv6: {enabled: false}
+    routes:
+      config:
+        - destination: 10.0.0.136/32
+          next-hop-address: 192.168.122.1
+          next-hop-interface: ospbr

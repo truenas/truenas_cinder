@@ -1,0 +1,210 @@
+# A minimal RHOSO 18 control plane for one CRC node: one replica of
+# everything, only the services that Cinder testing needs (Keystone, Glance,
+# Cinder, Nova, Neutron, Placement), and a "truenas" cinder-volume backend.
+# Needs osp-secret and cinder-volume-truenas-secrets (make-secrets.sh) and
+# the OpenStackVersion in 11-openstack-version.yaml for the backend's image.
+#
+# Internal API endpoints share the MetalLB VIP 172.17.0.80. TrueNAS
+# (10.0.0.136) is not on any RHOSO network: the node reaches it by a host
+# route through the Windows NAT on 192.168.122.1, set in 06-nncp.yaml.
+apiVersion: core.openstack.org/v1beta1
+kind: OpenStackControlPlane
+metadata:
+  name: openstack
+  namespace: openstack
+spec:
+  secret: osp-secret
+  storageClass: crc-csi-hostpath-provisioner
+
+  dns:
+    template:
+      replicas: 1
+      options:
+        - {key: server, values: [1.1.1.1]}
+        - {key: server, values: [8.8.8.8]}
+      override:
+        service:
+          metadata:
+            annotations:
+              metallb.universe.tf/address-pool: ctlplane
+              metallb.universe.tf/allow-shared-ip: ctlplane
+              metallb.universe.tf/loadBalancerIPs: 192.168.122.80
+          spec: {type: LoadBalancer}
+
+  galera:
+    templates:
+      openstack: {replicas: 1, secret: osp-secret, storageRequest: 5Gi}
+      openstack-cell1: {replicas: 1, secret: osp-secret, storageRequest: 5Gi}
+
+  memcached:
+    templates:
+      memcached: {replicas: 1}
+
+  rabbitmq:
+    templates:
+      rabbitmq:
+        replicas: 1
+        override:
+          service:
+            metadata:
+              annotations:
+                metallb.universe.tf/address-pool: internalapi
+                metallb.universe.tf/loadBalancerIPs: 172.17.0.85
+            spec: {type: LoadBalancer}
+      rabbitmq-cell1:
+        replicas: 1
+        override:
+          service:
+            metadata:
+              annotations:
+                metallb.universe.tf/address-pool: internalapi
+                metallb.universe.tf/loadBalancerIPs: 172.17.0.86
+            spec: {type: LoadBalancer}
+
+  keystone:
+    apiOverride: {route: {}}
+    template:
+      replicas: 1
+      databaseInstance: openstack
+      secret: osp-secret
+      override:
+        service:
+          internal: &internal-vip
+            metadata:
+              annotations:
+                metallb.universe.tf/address-pool: internalapi
+                metallb.universe.tf/allow-shared-ip: internalapi
+                metallb.universe.tf/loadBalancerIPs: 172.17.0.80
+            spec: {type: LoadBalancer}
+
+  placement:
+    apiOverride: {route: {}}
+    template:
+      replicas: 1
+      databaseInstance: openstack
+      secret: osp-secret
+      override:
+        service:
+          internal: *internal-vip
+
+  glance:
+    apiOverrides:
+      default: {route: {}}
+    template:
+      databaseInstance: openstack
+      secret: osp-secret
+      keystoneEndpoint: default
+      storage: {storageRequest: 20G}
+      customServiceConfig: |
+        [DEFAULT]
+        enabled_backends = default_backend:file
+        [glance_store]
+        default_backend = default_backend
+        [default_backend]
+        filesystem_store_datadir = /var/lib/glance/images/
+      glanceAPIs:
+        default:
+          type: single
+          replicas: 1
+          networkAttachments: [storage]
+          override:
+            service:
+              internal: *internal-vip
+
+  cinder:
+    apiOverride: {route: {}}
+    template:
+      databaseInstance: openstack
+      secret: osp-secret
+      cinderAPI:
+        replicas: 1
+        override:
+          service:
+            internal: *internal-vip
+      cinderScheduler: {replicas: 1}
+      cinderBackup: {replicas: 0, networkAttachments: [storage]}
+      cinderVolumes:
+        truenas:
+          replicas: 1
+          networkAttachments: [storage]
+          customServiceConfig: |
+            [DEFAULT]
+            enabled_backends = truenas
+            [truenas]
+            volume_backend_name = truenas
+            volume_driver = cinder.volume.drivers.truenas.driver.TrueNASDriver
+            truenas_ip = 10.0.0.136
+            truenas_verify_ssl = false
+            truenas_pool = tank
+            truenas_dataset_root = rhoso
+            truenas_iscsi_portal_id = 1
+          customServiceConfigSecrets:
+            - cinder-volume-truenas-secrets
+
+  neutron:
+    apiOverride: {route: {}}
+    template:
+      replicas: 1
+      databaseInstance: openstack
+      secret: osp-secret
+      networkAttachments: [internalapi]
+      override:
+        service:
+          internal: *internal-vip
+
+  ovn:
+    template:
+      ovnDBCluster:
+        ovndbcluster-nb:
+          dbType: NB
+          replicas: 1
+          storageRequest: 5G
+          networkAttachment: internalapi
+        ovndbcluster-sb:
+          dbType: SB
+          replicas: 1
+          storageRequest: 5G
+          networkAttachment: internalapi
+      ovnNorthd: {replicas: 1}
+
+  nova:
+    apiOverride: {route: {}}
+    template:
+      secret: osp-secret
+      apiServiceTemplate:
+        replicas: 1
+        override:
+          service:
+            internal: *internal-vip
+      metadataServiceTemplate:
+        replicas: 1
+        override:
+          service:
+            internal: *internal-vip
+      schedulerServiceTemplate: {replicas: 1}
+      cellTemplates:
+        cell0:
+          cellDatabaseAccount: nova-cell0
+          cellDatabaseInstance: openstack
+          cellMessageBusInstance: rabbitmq
+          hasAPIAccess: true
+        cell1:
+          cellDatabaseAccount: nova-cell1
+          cellDatabaseInstance: openstack-cell1
+          cellMessageBusInstance: rabbitmq-cell1
+          hasAPIAccess: true
+          noVNCProxyServiceTemplate:
+            enabled: true
+            networkAttachments: [ctlplane]
+
+  barbican: {enabled: false}
+  designate: {enabled: false}
+  heat: {enabled: false}
+  horizon: {enabled: false}
+  ironic: {enabled: false}
+  manila: {enabled: false}
+  octavia: {enabled: false}
+  redis: {enabled: false}
+  swift: {enabled: false}
+  telemetry: {enabled: false}
+  watcher: {enabled: false}

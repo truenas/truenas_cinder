@@ -1,0 +1,13 @@
+# Runs the "truenas" cinder-volume backend from the lab image that
+# rhoso/image/build.sh builds. The name must match the OpenStackControlPlane's.
+# Each rebuild repoints it at the new image's digest; reapplying this file
+# goes back to the tag, which nodes that have it cached won't pull again.
+apiVersion: core.openstack.org/v1beta1
+kind: OpenStackVersion
+metadata:
+  name: openstack
+  namespace: openstack
+spec:
+  customContainerImages:
+    cinderVolumeImages:
+      truenas: image-registry.openshift-image-registry.svc:5000/openstack/cinder-volume-truenas:18.0

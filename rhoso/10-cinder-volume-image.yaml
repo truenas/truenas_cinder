@@ -1,0 +1,34 @@
+# Builds rhoso/image/Containerfile in the cluster into the internal registry,
+# as image-registry.openshift-image-registry.svc:5000/openstack/
+# cinder-volume-truenas:18.0. Started by rhoso/image/build.sh, which uploads
+# the build context. The base image comes from registry.redhat.io, so the
+# build pulls it with "redhat-registry-pull", a copy of the cluster's global
+# pull secret that build.sh creates.
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: cinder-volume-truenas
+  namespace: openstack
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: cinder-volume-truenas
+  namespace: openstack
+spec:
+  source:
+    type: Binary
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile
+      pullSecret:
+        name: redhat-registry-pull
+  output:
+    to:
+      kind: ImageStreamTag
+      name: cinder-volume-truenas:18.0
+  resources:
+    requests:
+      memory: 256Mi

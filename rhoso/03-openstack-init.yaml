@@ -1,0 +1,22 @@
+# Initialization resource the RHOSO operator needs before any control plane.
+# The overrides scale to zero the service operators this lab does not use, to
+# free memory on the single CRC node. The test-operator stays: it runs Tempest
+# for the certification suite.
+apiVersion: operator.openstack.org/v1beta1
+kind: OpenStack
+metadata:
+  name: openstack
+  namespace: openstack-operators
+spec:
+  operatorOverrides:
+    - {name: barbican, replicas: 0}
+    - {name: designate, replicas: 0}
+    - {name: heat, replicas: 0}
+    - {name: horizon, replicas: 0}
+    - {name: ironic, replicas: 0}
+    - {name: manila, replicas: 0}
+    - {name: octavia, replicas: 0}
+    - {name: openstack-baremetal, replicas: 0}
+    - {name: swift, replicas: 0}
+    - {name: telemetry, replicas: 0}
+    - {name: watcher, replicas: 0}

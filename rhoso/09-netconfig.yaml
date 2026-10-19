@@ -1,0 +1,39 @@
+# RHOSO's IP allocation for data plane nodes on each network.
+# edpm-compute-0 takes fixed IPs .100 from these ranges.
+apiVersion: network.openstack.org/v1beta1
+kind: NetConfig
+metadata:
+  name: netconfig
+  namespace: openstack
+spec:
+  networks:
+    - name: ctlplane
+      dnsDomain: ctlplane.example.com
+      subnets:
+        - name: subnet1
+          cidr: 192.168.122.0/24
+          gateway: 192.168.122.1
+          allocationRanges:
+            - {start: 192.168.122.100, end: 192.168.122.120}
+            - {start: 192.168.122.150, end: 192.168.122.200}
+    - name: internalapi
+      dnsDomain: internalapi.example.com
+      subnets:
+        - name: subnet1
+          cidr: 172.17.0.0/24
+          vlan: 20
+          allocationRanges: [{start: 172.17.0.100, end: 172.17.0.250}]
+    - name: storage
+      dnsDomain: storage.example.com
+      subnets:
+        - name: subnet1
+          cidr: 172.18.0.0/24
+          vlan: 21
+          allocationRanges: [{start: 172.18.0.100, end: 172.18.0.250}]
+    - name: tenant
+      dnsDomain: tenant.example.com
+      subnets:
+        - name: subnet1
+          cidr: 172.19.0.0/24
+          vlan: 22
+          allocationRanges: [{start: 172.19.0.100, end: 172.19.0.250}]

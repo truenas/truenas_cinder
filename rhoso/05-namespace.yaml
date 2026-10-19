@@ -1,0 +1,9 @@
+# The namespace RHOSO's services run in (RHOSO 18 "Creating the openstack
+# namespace"): privileged pod security, label sync off.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openstack
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    security.openshift.io/scc.podSecurityLabelSync: "false"

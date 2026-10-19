@@ -1,0 +1,19 @@
+# iscsid on the OpenShift node: cinder-volume runs iscsiadm in the host's
+# namespaces (nsenter), for image copies and migrations. Role master because
+# CRC's single node is in the master pool (the worker pool is empty). Applying
+# this reboots the node once.
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  name: 99-master-cinder-enable-iscsid
+  labels:
+    machineconfiguration.openshift.io/role: master
+    service: cinder
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+    systemd:
+      units:
+        - name: iscsid.service
+          enabled: true

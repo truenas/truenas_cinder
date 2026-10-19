@@ -1,0 +1,27 @@
+# The RHOSO 18 operator, as in Red Hat's "Installing the OpenStack Operator"
+# (CLI). Manual approval keeps the operator version pinned: approve the
+# InstallPlan once, then create the OpenStack initialization resource
+# (03-openstack-init.yaml) when the CSV has succeeded.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openstack-operators
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openstack
+  namespace: openstack-operators
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openstack-operator
+  namespace: openstack-operators
+spec:
+  name: openstack-operator
+  channel: stable-v1.0
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Manual
