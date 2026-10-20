@@ -14,13 +14,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 #
-# Build the lab cinder-volume image (Containerfile) in the cluster that oc
-# points at. Copies the driver modules into the build context with their
-# imports rewritten to cinder.volume.drivers.truenas, as the sync tool does.
+# Build the cinder-volume image (Dockerfile) in the cluster that oc points
+# at, into its internal registry, and roll it out to the truenas backend.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-repo=$(cd "$here/../.." && pwd)
 namespace=openstack
 
 # The build pulls its base image from registry.redhat.io with a copy of the
@@ -45,25 +43,14 @@ oc apply -f "$here/../10-cinder-volume-image.yaml"
 
 context=$(mktemp -d)
 trap 'rm -rf "$context"' EXIT
-cp "$here/Containerfile" "$context/"
-mkdir "$context/truenas"
-(cd "$repo" && uv run python - "$context/truenas" <<'EOF'
-import sys
-from pathlib import Path
-
-sys.path.insert(0, 'tools')
-from sync_to_cinder import DRIVER_MODULES, SRC_PKG, rewrite_imports
-
-dest = Path(sys.argv[1])
-for name in DRIVER_MODULES:
-    text = (SRC_PKG / name).read_text(encoding='utf-8')
-    (dest / name).write_text(rewrite_imports(text), encoding='utf-8')
-    print(f'  {name}')
-EOF
-)
+"$here/context.sh" "$context"
+build_args=()
+while IFS= read -r arg; do
+    build_args+=(--build-arg "$arg")
+done < "$context/build-args"
 
 oc start-build cinder-volume-truenas -n "$namespace" \
-    --from-dir="$context" --follow --wait
+    --from-dir="$context" "${build_args[@]}" --follow --wait
 
 # Pods pull IfNotPresent, so a rebuild under the same tag would never reach
 # them: point the backend at the new image by digest, which rolls it out.

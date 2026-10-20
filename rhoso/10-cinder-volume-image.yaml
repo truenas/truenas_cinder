@@ -1,4 +1,4 @@
-# Builds rhoso/image/Containerfile in the cluster into the internal registry,
+# Builds rhoso/image/Dockerfile in the cluster into the internal registry,
 # as image-registry.openshift-image-registry.svc:5000/openstack/
 # cinder-volume-truenas:18.0. Started by rhoso/image/build.sh, which uploads
 # the build context. The base image comes from registry.redhat.io, so the
@@ -22,7 +22,6 @@ spec:
   strategy:
     type: Docker
     dockerStrategy:
-      dockerfilePath: Containerfile
       pullSecret:
         name: redhat-registry-pull
   output:
