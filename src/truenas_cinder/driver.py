@@ -90,11 +90,11 @@ class TrueNASDriver(driver.ISCSIDriver):
     """TrueNAS Cinder driver.
 
     Version history:
-        1.0.0 - Initial release (create/delete/attach/extend/snapshot/
+        0.1.0 - Initial release (create/delete/attach/extend/snapshot/
                 clone/from-snapshot/from-volume, multipath, multiattach).
     """
 
-    VERSION = '1.0.0'
+    VERSION = '0.1.0'
     # Must match the third-party CI wiki page name exactly.
     CI_WIKI_NAME = 'TrueNAS_CI'
 
