@@ -79,3 +79,8 @@ doc/build/
 .DS_Store
 Thumbs.db
 .venv-*/
+
+# ---- RHOSO environment settings: real addresses stay out of the repo ----
+!rhoso/env/
+rhoso/env/*.env
+!rhoso/env/example.env

@@ -1,8 +1,9 @@
-# The Cinder API tests, run by the test-operator the way the certification
-# suite runs them. Needs the data plane deployed and its compute discovered
-# (volume attach tests boot servers). Feature flags match the DevStack run;
-# validation is off because this lab has no external network for floating
-# IPs, so no test logs in to a guest.
+# A quick run of the Cinder API tests through the test-operator, outside the
+# certification suite. Needs the data plane deployed and its compute
+# discovered (volume attach tests boot servers). Feature flags match the
+# DevStack run; validation is off, so no test logs in to a guest and no
+# external network is needed (the certification suite needs one: see
+# README.md). Apply with apply.sh.
 #
 # Results: oc get tempest tempest-cinder; logs in the tempest-cinder-* pod
 # and its PVC.
@@ -13,7 +14,7 @@ metadata:
   namespace: openstack
 spec:
   containerImage: registry.redhat.io/rhoso/openstack-tempest-all-rhel9:18.0
-  storageClass: crc-csi-hostpath-provisioner
+  storageClass: ${STORAGE_CLASS}
   # The default request, 4 CPUs, doesn't fit next to the control plane on
   # one CRC node; Tempest mostly waits on the APIs.
   resources:

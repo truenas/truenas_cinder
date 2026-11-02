@@ -16,30 +16,40 @@
 
 The RHEL installer reads ks.cfg from any volume labelled OEMDRV, so attaching
 this ISO as a second DVD makes the install unattended without boot-menu
-edits. It registers with Red Hat during the install (the boot ISO has no
-packages), so it embeds RHSM_ORG_ID and RHSM_ACTIVATION_KEY from the
-environment: the output is written mode 0600, and should be deleted once the
-install is done.
+edits. The node's name, address, gateway, DNS servers, and RHEL release come
+from an environment's settings file (see settings.sh and env/example.env).
+It registers with Red Hat during the install (the boot ISO has no packages),
+so it embeds RHSM_ORG_ID and RHSM_ACTIVATION_KEY from the environment: the
+output is written mode 0600, and should be deleted once the install is done.
 
 Usage:
-    uv run --with pycdlib python rhoso/kickstart.py OUT.iso
+    uv run --with pycdlib python rhoso/kickstart.py ENV OUT.iso
+
+ENV is the name of rhoso/env/ENV.env, or a path to a settings file.
 """
 
 from __future__ import annotations
 
 import io
+import ipaddress
 import os
 import pathlib
+import re
 import sys
 
 import pycdlib
 
-HOSTNAME = 'edpm-compute-0.localdomain'
-CTLPLANE_IP = '192.168.122.100'
-GATEWAY = '192.168.122.1'  # the Windows host, NAT to the LAN and internet
-NAMESERVERS = '1.1.1.1,8.8.8.8'
-RELEASE = '9.6'  # RHOSO 18 supports RHEL 9.4 and 9.6 compute nodes
 PUBLIC_KEY = pathlib.Path.home() / '.ssh' / 'rhoso-edpm.pub'
+SETTINGS = (
+    'COMPUTE_NAME',
+    'COMPUTE_CTLPLANE_IP',
+    'CTLPLANE_PREFIX',
+    'CTLPLANE_GATEWAY',
+    'DNS_SERVER_1',
+    'DNS_SERVER_2',
+    'RHEL_RELEASE',
+)
+_SETTING = re.compile(r'^([A-Z_][A-Z0-9_]*)=(.*)$')
 
 TEMPLATE = """\
 # Unattended install of the RHOSO 18 compute (EDPM) node.
@@ -48,7 +58,7 @@ eula --agreed
 lang en_US.UTF-8
 keyboard us
 timezone UTC --utc
-network --device=link --bootproto=static --ip={ip} --netmask=255.255.255.0 \
+network --device=link --bootproto=static --ip={ip} --netmask={netmask} \
 --gateway={gateway} --nameserver={nameservers} --hostname={hostname} \
 --activate --onboot=yes
 rhsm --organization={org} --activation-key={key}
@@ -81,22 +91,51 @@ subscription-manager release --set={release}
 """
 
 
+def load_settings(env: str) -> dict[str, str]:
+    """An environment's settings, read as settings.sh reads them."""
+    path = pathlib.Path(env)
+    if not path.is_file():
+        path = pathlib.Path(__file__).resolve().parent / 'env' / f'{env}.env'
+    if not path.is_file():
+        sys.exit(f'error: no settings file {env} or {path}')
+    settings: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        match = _SETTING.match(line)
+        if not match:
+            sys.exit(f'error: {path}: not NAME=value: {line}')
+        name, value = match.groups()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in '"\'':
+            value = value[1:-1]
+        settings[name] = value
+    missing = [name for name in SETTINGS if not settings.get(name)]
+    if missing:
+        sys.exit(f'error: not set in {path}: {", ".join(missing)}')
+    return settings
+
+
 def main() -> int:
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         sys.exit(__doc__)
+    settings = load_settings(sys.argv[1])
     org = os.environ.get('RHSM_ORG_ID', '')
     key = os.environ.get('RHSM_ACTIVATION_KEY', '')
     if not org or not key:
         sys.exit('error: RHSM_ORG_ID and RHSM_ACTIVATION_KEY must be set')
+    netmask = ipaddress.IPv4Network(
+        f'0.0.0.0/{settings["CTLPLANE_PREFIX"]}'
+    ).netmask
     kickstart = TEMPLATE.format(
-        ip=CTLPLANE_IP,
-        gateway=GATEWAY,
-        nameservers=NAMESERVERS,
-        hostname=HOSTNAME,
+        ip=settings['COMPUTE_CTLPLANE_IP'],
+        netmask=netmask,
+        gateway=settings['CTLPLANE_GATEWAY'],
+        nameservers=f'{settings["DNS_SERVER_1"]},{settings["DNS_SERVER_2"]}',
+        hostname=f'{settings["COMPUTE_NAME"]}.localdomain',
         org=org,
         key=key,
         pubkey=PUBLIC_KEY.read_text().strip(),
-        release=RELEASE,
+        release=settings['RHEL_RELEASE'],
     ).encode()
 
     iso = pycdlib.PyCdlib()
@@ -110,7 +149,7 @@ def main() -> int:
         rr_name='ks.cfg',
         joliet_path='/ks.cfg',
     )
-    out = pathlib.Path(sys.argv[1])
+    out = pathlib.Path(sys.argv[2])
     old_umask = os.umask(0o077)
     try:
         iso.write(str(out))

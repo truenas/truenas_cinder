@@ -1,7 +1,15 @@
-# Runs the "truenas" cinder-volume backend from the lab image that
-# rhoso/image/build.sh builds. The name must match the OpenStackControlPlane's.
-# Each rebuild repoints it at the new image's digest; reapplying this file
-# goes back to the tag, which nodes that have it cached won't pull again.
+# Runs both TrueNAS cinder-volume backends from the certified image, which
+# lives in Red Hat's certification registry and is imported into the
+# cluster's registry as cinder-volume-truenas:<tag> (CINDER_VOLUME_IMAGE_TAG):
+#   oc import-image cinder-volume-truenas:<tag> -n openstack --confirm \
+#       --reference-policy=local \
+#       --from=quay.io/redhat-isv-containers/<component ID>:<tag>
+# (pulled with the redhat-isv-pull secret). A certified tag never changes, so
+# pods pulling IfNotPresent always get the right image. rhoso/image/build.sh
+# instead builds the image in the cluster for development, and repoints the
+# truenas backend at its digest.
+#
+# The name must match the OpenStackControlPlane's.
 apiVersion: core.openstack.org/v1beta1
 kind: OpenStackVersion
 metadata:
@@ -10,4 +18,5 @@ metadata:
 spec:
   customContainerImages:
     cinderVolumeImages:
-      truenas: image-registry.openshift-image-registry.svc:5000/openstack/cinder-volume-truenas:18.0
+      truenas: image-registry.openshift-image-registry.svc:5000/openstack/cinder-volume-truenas:${CINDER_VOLUME_IMAGE_TAG}
+      truenas2: image-registry.openshift-image-registry.svc:5000/openstack/cinder-volume-truenas:${CINDER_VOLUME_IMAGE_TAG}

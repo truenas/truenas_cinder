@@ -1,8 +1,10 @@
-# The data plane: rhoso-compute-0, a pre-provisioned RHEL 9.6 Hyper-V VM at
-# 192.168.122.100, built by kickstart.py and already registered. Needs the
-# secrets from make-dataplane-secrets.sh. Its one NIC carries ctlplane
-# untagged and internalapi, storage and tenant as VLANs 20-22, like the CRC
-# node's; os-net-config moves the ctlplane address onto br-ex.
+# The data plane: one pre-provisioned RHEL compute node (COMPUTE_NAME, at
+# COMPUTE_CTLPLANE_IP), installed by kickstart.py and already registered.
+# Needs the secrets from make-dataplane-secrets.sh. Its one NIC
+# (COMPUTE_NIC) carries ctlplane untagged and internalapi, storage and
+# tenant as VLANs, like the OpenShift node's; os-net-config moves the
+# ctlplane address onto br-ex. For more compute nodes, add an entry per node
+# under `nodes`.
 #
 # No "redhat" service (the node is registered) and no telemetry (disabled in
 # the control plane); bootstrap only pins the release and enables the repos.
@@ -44,7 +46,7 @@ spec:
       ansibleVars:
         edpm_bootstrap_command: |
           set -e
-          subscription-manager release --set=9.6
+          subscription-manager release --set=${RHEL_RELEASE}
           subscription-manager repos --disable='*' \
             --enable=rhel-9-for-x86_64-baseos-eus-rpms \
             --enable=rhel-9-for-x86_64-appstream-eus-rpms \
@@ -53,12 +55,15 @@ spec:
             --enable=rhoso-18.0-for-rhel-9-x86_64-rpms \
             --enable=rhceph-7-tools-for-rhel-9-x86_64-rpms
         timesync_ntp_servers:
-          - {hostname: pool.ntp.org}
-        edpm_sshd_allowed_ranges: [192.168.122.0/24]
+          - {hostname: ${NTP_SERVER}}
+        edpm_sshd_allowed_ranges: [${CTLPLANE_CIDR}]
         edpm_nodes_validation_validate_controllers_icmp: false
         edpm_nodes_validation_validate_gateway_icmp: false
         neutron_physical_bridge_name: br-ex
-        neutron_public_interface_name: eth0
+        neutron_public_interface_name: ${COMPUTE_NIC}
+        # The compute is the only OVN gateway, so routers to the external
+        # network (and the certification suite's floating IPs) live here.
+        edpm_enable_chassis_gw: true
         edpm_network_config_template: |
           ---
           {% set mtu_list = [ctlplane_mtu] %}
@@ -91,12 +96,12 @@ spec:
               routes: {{ lookup('vars', networks_lower[network] ~ '_host_routes') }}
           {% endfor %}
   nodes:
-    edpm-compute-0:
-      hostName: edpm-compute-0
+    ${COMPUTE_NAME}:
+      hostName: ${COMPUTE_NAME}
       ansible:
-        ansibleHost: 192.168.122.100
+        ansibleHost: ${COMPUTE_CTLPLANE_IP}
       networks:
-        - {name: ctlplane, subnetName: subnet1, defaultRoute: true, fixedIP: 192.168.122.100}
+        - {name: ctlplane, subnetName: subnet1, defaultRoute: true, fixedIP: ${COMPUTE_CTLPLANE_IP}}
         - {name: internalapi, subnetName: subnet1}
         - {name: storage, subnetName: subnet1}
         - {name: tenant, subnetName: subnet1}

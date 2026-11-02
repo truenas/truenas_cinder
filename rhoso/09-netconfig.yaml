@@ -1,5 +1,6 @@
-# RHOSO's IP allocation for data plane nodes on each network.
-# edpm-compute-0 takes fixed IPs .100 from these ranges.
+# RHOSO's IP allocation for data plane nodes on each network, from the
+# *_EDPM_RANGES settings. Each compute's ctlplane address is fixed in
+# 13-data-plane.yaml and must be inside CTLPLANE_EDPM_RANGES.
 apiVersion: network.openstack.org/v1beta1
 kind: NetConfig
 metadata:
@@ -11,29 +12,27 @@ spec:
       dnsDomain: ctlplane.example.com
       subnets:
         - name: subnet1
-          cidr: 192.168.122.0/24
-          gateway: 192.168.122.1
-          allocationRanges:
-            - {start: 192.168.122.100, end: 192.168.122.120}
-            - {start: 192.168.122.150, end: 192.168.122.200}
+          cidr: ${CTLPLANE_CIDR}
+          gateway: ${CTLPLANE_GATEWAY}
+          allocationRanges: ${CTLPLANE_EDPM_RANGES}
     - name: internalapi
       dnsDomain: internalapi.example.com
       subnets:
         - name: subnet1
-          cidr: 172.17.0.0/24
-          vlan: 20
-          allocationRanges: [{start: 172.17.0.100, end: 172.17.0.250}]
+          cidr: ${INTERNALAPI_CIDR}
+          vlan: ${INTERNALAPI_VLAN}
+          allocationRanges: ${INTERNALAPI_EDPM_RANGES}
     - name: storage
       dnsDomain: storage.example.com
       subnets:
         - name: subnet1
-          cidr: 172.18.0.0/24
-          vlan: 21
-          allocationRanges: [{start: 172.18.0.100, end: 172.18.0.250}]
+          cidr: ${STORAGE_CIDR}
+          vlan: ${STORAGE_VLAN}
+          allocationRanges: ${STORAGE_EDPM_RANGES}
     - name: tenant
       dnsDomain: tenant.example.com
       subnets:
         - name: subnet1
-          cidr: 172.19.0.0/24
-          vlan: 22
-          allocationRanges: [{start: 172.19.0.100, end: 172.19.0.250}]
+          cidr: ${TENANT_CIDR}
+          vlan: ${TENANT_VLAN}
+          allocationRanges: ${TENANT_EDPM_RANGES}

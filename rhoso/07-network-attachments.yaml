@@ -1,8 +1,8 @@
 # Pod attachments to the isolated networks (install_yamls layout): pods get
-# .30-.70 on each network from whereabouts. `datacentre` is the OVN physnet
-# bridge mapping; it must exist before the control plane, so ovn-operator
-# reuses it instead of creating a host-device attachment that would move
-# ospbr into the ovn-controller pod.
+# addresses on each network from whereabouts, in the *_POD_RANGE settings.
+# `datacentre` is the OVN physnet bridge mapping; it must exist before the
+# control plane, so ovn-operator reuses it instead of creating a host-device
+# attachment that would move ospbr into the ovn-controller pod.
 ---
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
@@ -13,8 +13,8 @@ spec:
   config: |
     {"cniVersion": "0.3.1", "name": "ctlplane", "type": "macvlan",
      "master": "ospbr",
-     "ipam": {"type": "whereabouts", "range": "192.168.122.0/24",
-              "range_start": "192.168.122.30", "range_end": "192.168.122.70"}}
+     "ipam": {"type": "whereabouts", "range": "${CTLPLANE_CIDR}",
+              "range_start": "${CTLPLANE_POD_RANGE_START}", "range_end": "${CTLPLANE_POD_RANGE_END}"}}
 ---
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
@@ -24,9 +24,9 @@ metadata:
 spec:
   config: |
     {"cniVersion": "0.3.1", "name": "internalapi", "type": "macvlan",
-     "master": "eth0.20",
-     "ipam": {"type": "whereabouts", "range": "172.17.0.0/24",
-              "range_start": "172.17.0.30", "range_end": "172.17.0.70"}}
+     "master": "${OCP_NODE_NIC}.${INTERNALAPI_VLAN}",
+     "ipam": {"type": "whereabouts", "range": "${INTERNALAPI_CIDR}",
+              "range_start": "${INTERNALAPI_POD_RANGE_START}", "range_end": "${INTERNALAPI_POD_RANGE_END}"}}
 ---
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
@@ -36,9 +36,9 @@ metadata:
 spec:
   config: |
     {"cniVersion": "0.3.1", "name": "storage", "type": "macvlan",
-     "master": "eth0.21",
-     "ipam": {"type": "whereabouts", "range": "172.18.0.0/24",
-              "range_start": "172.18.0.30", "range_end": "172.18.0.70"}}
+     "master": "${OCP_NODE_NIC}.${STORAGE_VLAN}",
+     "ipam": {"type": "whereabouts", "range": "${STORAGE_CIDR}",
+              "range_start": "${STORAGE_POD_RANGE_START}", "range_end": "${STORAGE_POD_RANGE_END}"}}
 ---
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
@@ -48,9 +48,9 @@ metadata:
 spec:
   config: |
     {"cniVersion": "0.3.1", "name": "tenant", "type": "macvlan",
-     "master": "eth0.22",
-     "ipam": {"type": "whereabouts", "range": "172.19.0.0/24",
-              "range_start": "172.19.0.30", "range_end": "172.19.0.70"}}
+     "master": "${OCP_NODE_NIC}.${TENANT_VLAN}",
+     "ipam": {"type": "whereabouts", "range": "${TENANT_CIDR}",
+              "range_start": "${TENANT_POD_RANGE_START}", "range_end": "${TENANT_POD_RANGE_END}"}}
 ---
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition

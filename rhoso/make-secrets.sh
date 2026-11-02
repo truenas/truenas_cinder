@@ -18,9 +18,12 @@
 # printing any of their values:
 #   osp-secret                     random service and database passwords
 #   cinder-volume-truenas-secrets  the TrueNAS login and API key, as a
-#                                  cinder.conf snippet for the truenas backend
-# Existing secrets are left alone. Needs TRUENAS_API_KEY in the environment;
-# TRUENAS_LOGIN defaults to truenas_admin.
+#                                  cinder.conf snippet with a section for
+#                                  each backend (truenas, truenas2)
+# An existing osp-secret is left alone: its passwords are already in use.
+# The TrueNAS secret is replaced on every run, since it comes entirely from
+# the environment. Needs TRUENAS_API_KEY; TRUENAS_LOGIN defaults to
+# truenas_admin.
 set -euo pipefail
 
 namespace=openstack
@@ -62,10 +65,14 @@ EOF
     } | oc create -f -
 fi
 
-if ! oc get secret cinder-volume-truenas-secrets -n "$namespace" \
+: "${TRUENAS_API_KEY:?set TRUENAS_API_KEY}"
+verb=create
+if oc get secret cinder-volume-truenas-secrets -n "$namespace" \
         >/dev/null 2>&1; then
-    : "${TRUENAS_API_KEY:?set TRUENAS_API_KEY}"
-    oc create -f - <<EOF
+    verb=replace
+fi
+{
+    cat <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
@@ -74,8 +81,12 @@ metadata:
 type: Opaque
 stringData:
   truenas-secrets.conf: |
-    [truenas]
+EOF
+    for backend in truenas truenas2; do
+        cat <<EOF
+    [$backend]
     truenas_login = ${TRUENAS_LOGIN:-truenas_admin}
     truenas_api_key = $TRUENAS_API_KEY
 EOF
-fi
+    done
+} | oc "$verb" -f -

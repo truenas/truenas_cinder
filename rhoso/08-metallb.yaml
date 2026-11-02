@@ -1,26 +1,27 @@
-# Service VIPs on each network (.80-.90), announced by ARP on that network's
-# interface only; never on tap0/br-ex. Fixed VIPs used by the control plane:
-# DNS 192.168.122.80, internal APIs 172.17.0.80, RabbitMQ 172.17.0.85/.86.
+# Service VIPs on each network (the *_VIP_RANGE settings), announced by ARP
+# on that network's interface only. The control plane pins these from the
+# ranges: DNS_VIP on ctlplane, and INTERNALAPI_VIP (shared by the internal
+# API endpoints), RABBITMQ_VIP and RABBITMQ_CELL1_VIP on internalapi.
 ---
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata: {name: ctlplane, namespace: metallb-system}
-spec: {addresses: [192.168.122.80-192.168.122.90]}
+spec: {addresses: [${CTLPLANE_VIP_RANGE}]}
 ---
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata: {name: internalapi, namespace: metallb-system}
-spec: {addresses: [172.17.0.80-172.17.0.90]}
+spec: {addresses: [${INTERNALAPI_VIP_RANGE}]}
 ---
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata: {name: storage, namespace: metallb-system}
-spec: {addresses: [172.18.0.80-172.18.0.90]}
+spec: {addresses: [${STORAGE_VIP_RANGE}]}
 ---
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata: {name: tenant, namespace: metallb-system}
-spec: {addresses: [172.19.0.80-172.19.0.90]}
+spec: {addresses: [${TENANT_VIP_RANGE}]}
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
@@ -30,14 +31,14 @@ spec: {ipAddressPools: [ctlplane], interfaces: [ospbr]}
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
 metadata: {name: internalapi, namespace: metallb-system}
-spec: {ipAddressPools: [internalapi], interfaces: [eth0.20]}
+spec: {ipAddressPools: [internalapi], interfaces: [${OCP_NODE_NIC}.${INTERNALAPI_VLAN}]}
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
 metadata: {name: storage, namespace: metallb-system}
-spec: {ipAddressPools: [storage], interfaces: [eth0.21]}
+spec: {ipAddressPools: [storage], interfaces: [${OCP_NODE_NIC}.${STORAGE_VLAN}]}
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
 metadata: {name: tenant, namespace: metallb-system}
-spec: {ipAddressPools: [tenant], interfaces: [eth0.22]}
+spec: {ipAddressPools: [tenant], interfaces: [${OCP_NODE_NIC}.${TENANT_VLAN}]}

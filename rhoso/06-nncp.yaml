@@ -1,74 +1,79 @@
-# The CRC node's second NIC (eth0, hot-added on the Hyper-V `rhoso` switch),
-# laid out as RHOSO's install_yamls dev setup does: eth0 is a port of the
-# Linux bridge `ospbr`, which holds the ctlplane address, and the isolated
-# networks are VLANs on eth0. CRC's own default route stays on tap0/br-ex;
-# never add one here.
+# The OpenShift node's RHOSO networks, laid out as RHOSO's install_yamls dev
+# setup does for a single node such as OpenShift Local: the node's second
+# NIC, ${OCP_NODE_NIC}, is a port of the Linux bridge `ospbr`, which holds
+# the ctlplane address, and the isolated networks are VLANs on the NIC. The
+# node's own default route stays where it is; never add one here. A
+# multi-node cluster needs a policy per node, with each node's NIC and
+# addresses.
 #
-#   ctlplane     192.168.122.10/24  (untagged, on ospbr; gateway .1 = Windows NAT)
-#   internalapi  172.17.0.5/24      VLAN 20
-#   storage      172.18.0.5/24      VLAN 21
-#   tenant       172.19.0.5/24      VLAN 22
+#   ctlplane     ${CTLPLANE_NODE_IP}/${CTLPLANE_PREFIX}  (untagged, on ospbr)
+#   internalapi  ${INTERNALAPI_NODE_IP}/${INTERNALAPI_PREFIX}  VLAN ${INTERNALAPI_VLAN}
+#   storage      ${STORAGE_NODE_IP}/${STORAGE_PREFIX}  VLAN ${STORAGE_VLAN}
+#   tenant       ${TENANT_NODE_IP}/${TENANT_PREFIX}  VLAN ${TENANT_VLAN}
 #
-# The host route sends iSCSI to TrueNAS (10.0.0.136) through the Windows NAT
-# rather than CRC's slower user-mode network: cinder-volume runs iscsiadm in
-# the node's namespace.
+# The host route sends iSCSI and NFS for TrueNAS through the ctlplane gateway,
+# for a lab where TrueNAS is on none of the RHOSO networks (OpenShift Local's
+# own network is slow). cinder-volume runs iscsiadm in the node's namespace,
+# so the node's routes are the ones that count. Drop the route when TrueNAS
+# is directly reachable.
 apiVersion: nmstate.io/v1
 kind: NodeNetworkConfigurationPolicy
 metadata:
-  name: eth0-crc
+  name: ${OCP_NODE_NIC}-${OCP_NODE_NAME}
 spec:
   nodeSelector:
-    kubernetes.io/hostname: crc
+    kubernetes.io/hostname: ${OCP_NODE_NAME}
   desiredState:
     interfaces:
-      - name: eth0.20
+      - name: ${OCP_NODE_NIC}.${INTERNALAPI_VLAN}
         type: vlan
         state: up
-        vlan: {base-iface: eth0, id: 20, reorder-headers: true}
+        vlan: {base-iface: ${OCP_NODE_NIC}, id: ${INTERNALAPI_VLAN}, reorder-headers: true}
         ipv4:
           enabled: true
           dhcp: false
-          address: [{ip: 172.17.0.5, prefix-length: 24}]
+          address: [{ip: ${INTERNALAPI_NODE_IP}, prefix-length: ${INTERNALAPI_PREFIX}}]
         ipv6: {enabled: false}
-      - name: eth0.21
+      - name: ${OCP_NODE_NIC}.${STORAGE_VLAN}
         type: vlan
         state: up
-        vlan: {base-iface: eth0, id: 21, reorder-headers: true}
+        vlan: {base-iface: ${OCP_NODE_NIC}, id: ${STORAGE_VLAN}, reorder-headers: true}
         ipv4:
           enabled: true
           dhcp: false
-          address: [{ip: 172.18.0.5, prefix-length: 24}]
+          address: [{ip: ${STORAGE_NODE_IP}, prefix-length: ${STORAGE_PREFIX}}]
         ipv6: {enabled: false}
-      - name: eth0.22
+      - name: ${OCP_NODE_NIC}.${TENANT_VLAN}
         type: vlan
         state: up
-        vlan: {base-iface: eth0, id: 22, reorder-headers: true}
+        vlan: {base-iface: ${OCP_NODE_NIC}, id: ${TENANT_VLAN}, reorder-headers: true}
         ipv4:
           enabled: true
           dhcp: false
-          address: [{ip: 172.19.0.5, prefix-length: 24}]
+          address: [{ip: ${TENANT_NODE_IP}, prefix-length: ${TENANT_PREFIX}}]
         ipv6: {enabled: false}
-      # eth0's static MAC. Without it the bridge has a random MAC until eth0
-      # is hot-added after boot, and MetalLB keeps answering ARP for the VIPs
-      # with that stale MAC, so nothing reaches them from outside the node.
+      # The NIC's MAC. On OpenShift Local the NIC is hot-added after boot, so
+      # without it the bridge keeps a random MAC until then, and MetalLB
+      # answers ARP for the VIPs with that stale MAC: nothing reaches them
+      # from outside the node.
       - name: ospbr
         type: linux-bridge
         state: up
         mtu: 1500
-        mac-address: "00:15:5D:00:E6:02"
+        mac-address: "${OCP_NODE_NIC_MAC}"
         bridge:
           options:
             stp: {enabled: false}
           port:
-            - name: eth0
+            - name: ${OCP_NODE_NIC}
               vlan: {}
         ipv4:
           enabled: true
           dhcp: false
-          address: [{ip: 192.168.122.10, prefix-length: 24}]
+          address: [{ip: ${CTLPLANE_NODE_IP}, prefix-length: ${CTLPLANE_PREFIX}}]
         ipv6: {enabled: false}
     routes:
       config:
-        - destination: 10.0.0.136/32
-          next-hop-address: 192.168.122.1
+        - destination: ${TRUENAS_IP}/32
+          next-hop-address: ${CTLPLANE_GATEWAY}
           next-hop-interface: ospbr

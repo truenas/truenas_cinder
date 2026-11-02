@@ -9,7 +9,6 @@ metadata:
   namespace: openstack-operators
 spec:
   operatorOverrides:
-    - {name: barbican, replicas: 0}
     - {name: designate, replicas: 0}
     - {name: heat, replicas: 0}
     - {name: horizon, replicas: 0}
