@@ -163,7 +163,7 @@ spec:
 | `truenas_iscsi_portal_id` | The portal ID from step 1 |
 
 Keep `replicas` at 1: Cinder runs one volume service per backend. The
-[driver reference](https://gh.ali360.cloudns.ch/truenas/truenas_cinder/blob/main/docs/truenas-driver.rst)
+[driver reference](https://github.com/truenas/truenas_cinder/blob/main/docs/truenas-driver.rst)
 lists every option, including thin or thick provisioning, compression, and
 CHAP.
 
@@ -234,5 +234,5 @@ oc logs -n openstack cinder-volume-truenas-0 -c cinder-volume
 | `TrueNAS iSCSI portal N was not found` | `truenas_iscsi_portal_id` doesn't match a portal |
 | Volumes create but don't attach | `iscsid` isn't running on the node (step 2), or TCP 3260 on TrueNAS isn't reachable from the storage network |
 
-The [driver reference](https://gh.ali360.cloudns.ch/truenas/truenas_cinder/blob/main/docs/truenas-driver.rst#troubleshooting)
+The [driver reference](https://github.com/truenas/truenas_cinder/blob/main/docs/truenas-driver.rst#troubleshooting)
 lists every startup error and its fix.
